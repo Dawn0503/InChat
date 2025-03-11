@@ -1,0 +1,22 @@
+{
+  "private": true,
+  "author": "Zi Yan <2252658983@qq.com>",
+  "scripts": {
+    "dev": "umi dev",
+    "build": "umi build",
+    "postinstall": "umi setup",
+    "setup": "umi setup",
+    "start": "npm run dev"
+  },
+  "dependencies": {
+    "axios": "^1.8.2",
+    "http-proxy-middleware": "^3.0.3",
+    "umi": "^4.4.6"
+  },
+  "devDependencies": {
+    "@types/react": "^18.0.33",
+    "@types/react-dom": "^18.0.11",
+    "typescript": "^5.0.3"
+  },
+  "proxy": "http://localhost:3006"
+}
