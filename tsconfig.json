@@ -1,3 +1,9 @@
 {
-  "extends": "./src/.umi/tsconfig.json"
+  "extends": "./src/.umi/tsconfig.json",
+  "proxy": {
+    "/api": {
+      "target": "http://localhost:3006",
+      "changeOrigin": true
+    }
+  }
 }

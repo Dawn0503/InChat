@@ -1,16 +1,7 @@
-import axios, { AxiosRequestConfig, AxiosResponse, AxiosError } from 'axios';
-
-/**
- * 创建 axios 实例
- * 配置基础URL、超时时间和默认请求头
- */
-const instance = axios.create({
-  baseURL: process.env.API_URL || 'http://localhost:3006', // 根据环境设置基础URL
-  timeout: 10000, // 请求超时时间
-  headers: {
-    'Content-Type': 'application/json', // 默认内容类型为JSON
-  },
-});
+import { extend, RequestOptionsInit, ResponseError } from 'umi-request';
+import { Alert, Snackbar } from '@mui/material';
+import React from 'react';
+import { createRoot } from 'react-dom/client';
 
 /**
  * 定义响应数据的通用接口
@@ -49,136 +40,199 @@ const codeMessage: Record<number, string> = {
   504: '网关超时。',
 };
 
+// 使用 MUI 的 Snackbar 显示通知
+const showNotification = (message: string, description: string, severity: 'error' | 'warning' | 'info' | 'success' = 'error') => {
+  // 创建一个容器用于挂载通知组件
+  // 创建一个新的 div 元素作为通知的容器
+  const container = document.createElement('div');
+  // 将容器添加到文档的主体中
+  document.body.appendChild(container);
+
+  // 创建 React 18 的根节点，用于渲染通知组件
+  const root = createRoot(container);
+
+  // 定义关闭通知的逻辑
+  const handleClose = () => {
+    // 卸载根节点，移除容器
+    root.unmount();
+    container.remove();
+  };
+
+  // 使用现代 API 渲染 Snackbar 组件
+  root.render(
+    <Snackbar
+      open={true} // 设置通知为打开状态
+      autoHideDuration={6000} // 设置自动关闭的持续时间为6000毫秒
+      onClose={handleClose} // 关闭时调用 handleClose 函数
+      anchorOrigin={{ vertical: 'top', horizontal: 'right' }} // 设置通知显示的位置
+    >
+      <Alert onClose={handleClose} severity={severity} sx={{ width: '100%' }}>
+        {/* 显示通知的标题 */}
+        <div style={{ fontWeight: 'bold' }}>{message}</div>
+        {/* 显示通知的描述 */}
+        <div>{description}</div>
+      </Alert>
+    </Snackbar>
+  );
+}
+
 /**
  * 自定义错误处理函数
  * 处理HTTP请求过程中发生的错误
- * @param {any} error 错误对象
+ * @param {ResponseError} error 错误对象
  * @returns {Promise<never>} 返回被拒绝的Promise
  */
-const errorHandler = (error: any) => {
-  const { response } = error;
+// 自定义错误处理函数
+// 处理HTTP请求过程中发生的错误
+const errorHandler = (error: ResponseError) => {
+  const { response } = error; // 获取响应对象
+  
+  // 检查响应是否存在且状态码有效
   if (response && response.status) {
+    // 根据状态码获取对应的错误信息
     const errorText = codeMessage[response.status] || response.statusText;
-    const { status, url } = response;
+    const { status, url } = response; // 获取状态码和请求的URL
     
-    console.error(`请求错误 ${status}: ${url}`);
-    console.error(errorText);
+    // 显示请求错误的通知
+    showNotification(
+      `请求错误 ${status}: ${url}`, // 通知标题
+      errorText, // 通知描述
+      'error' // 通知的严重性
+    );
     
     // 401 未授权时跳转到登录页
     if (status === 401) {
-      localStorage.removeItem('token');
-      window.location.href = '/login';
+      localStorage.removeItem('token'); // 移除本地存储的token
+      window.location.href = '/login'; // 跳转到登录页面
     }
-  } else if (!response) {
-    console.error('网络异常，无法连接服务器');
-  }
+  } 
   
-  return Promise.reject(error);
+  return Promise.reject(error); // 返回被拒绝的Promise
 };
+
+/**
+ * 创建默认配置的请求实例
+ * 配置基础URL、超时时间和默认请求头
+ */
+const request = extend({
+  prefix: process.env.API_URL || 'http://localhost:3006',
+  timeout: 10000,
+  errorHandler,
+  credentials: 'include', // 默认携带 cookie
+});
 
 /**
  * 请求拦截器
  * 在发送请求前对请求配置进行处理
  */
-instance.interceptors.request.use(
-  (config) => {
-    // 从 localStorage 获取 token
-    const token = localStorage.getItem('token');
-    
-    // 如果有 token 就携带上
-    if (token && config.headers) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    
-    return config;
-  },
-  (error) => {
-    console.error('请求错误');
-    return Promise.reject(error);
-  }
-);
+// 请求拦截器
+// 在发送请求前对请求配置进行处理
+request.interceptors.request.use((url, options) => {
+  // 从本地存储中获取token
+  const token = localStorage.getItem('token');
+  
+  // 设置Authorization头部，如果token存在则使用Bearer模式
+  const authHeader = { Authorization: token ? `Bearer ${token}` : '' };
+  
+  // 返回修改后的请求配置
+  return {
+    url,
+    options: {
+      ...options,
+      headers: {
+        ...options.headers,
+        ...authHeader, // 将Authorization头部添加到请求头中
+      },
+    },
+  };
+});
 
 /**
  * 响应拦截器
  * 在接收到响应后对响应数据进行处理
  */
-instance.interceptors.response.use(
-  (response: AxiosResponse<ResponseData>) => {
-    const res = response.data;
+request.interceptors.response.use(async (response) => {
+  const data = await response.clone().json();
+  console.log('响应数据结构:', data);
+  
+  // 如果响应直接包含 token，说明是登录接口的返回
+  if (data.token) {
+    return {
+      code: 200,
+      data: data,
+      message: '登录成功',
+      success: true
+    };
+  }
+  
+  // 处理其他接口的返回
+  if (!data.code) {
+    return {
+      code: 200,
+      data: data,
+      message: '操作成功',
+      success: true
+    };
+  }
+  
+  // 处理标准格式的返回
+  if (data.code !== 200) {
+    showNotification(
+      '请求失败',
+      data.message || '未知错误',
+      'error'
+    );
     
-    // 根据自定义错误码判断请求是否成功
-    if (res.code !== 200) {
-      // 处理错误
-      console.error(res.message || '请求失败');
-      
-      // 401: 未登录或 token 过期
-      if (res.code === 401) {
-        // 清除用户信息并跳转到登录页
-        localStorage.removeItem('token');
-        window.location.href = '/login';
-      }
-      
-      return Promise.reject(new Error(res.message || '请求失败'));
+    if (data.code === 401) {
+      localStorage.removeItem('token');
+      window.location.href = '/login';
     }
     
-    // 请求成功直接返回数据部分
-    return res.data;
-  },
-  (error: AxiosError) => {
-    return errorHandler(error);
+    return Promise.reject(data);
   }
-);
+  
+  return data;
+});
 
-/**
- * 封装 GET 请求
- * @template T 响应数据的类型
- * @param {string} url 请求地址
- * @param {any} [params] 请求参数
- * @param {AxiosRequestConfig} [config] 请求配置
- * @returns {Promise<T>} 返回Promise对象
- */
-export function get<T = any>(url: string, params?: any, config?: AxiosRequestConfig): Promise<T> {
-  return instance.get(url, { params, ...config });
+// 自定义一个简单的类型，或者使用 any
+interface CustomRequestConfig {
+  errorConfig: {
+    adaptor: (resData: any) => any; // 适配器函数
+  };
+  middlewares: Array<(ctx: any, next: () => Promise<void>) => Promise<void>>; // 中间件数组
+  requestInterceptors: Array<(url: string, options: any) => { url: string; options: any }>; // 请求拦截器数组
+  responseInterceptors: Array<(response: any) => any>; // 响应拦截器数组
 }
 
-/**
- * 封装 POST 请求
- * @template T 响应数据的类型
- * @param {string} url 请求地址
- * @param {any} [data] 请求体数据
- * @param {AxiosRequestConfig} [config] 请求配置
- * @returns {Promise<T>} 返回Promise对象
- */
-export function post<T = any>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T> {
-  return instance.post(url, data, config);
-}
+// 更新 requestConfig 的类型
+export const requestConfig: CustomRequestConfig = {
+  errorConfig: {
+    adaptor: (resData) => {
+      return {
+        ...resData,
+        success: resData.code === 200, // 判断请求是否成功
+        errorMessage: resData.message, // 错误信息
+      };
+    },
+  },
+  middlewares: [
+    async (ctx, next) => {
+      // 请求前处理
+      await next(); // 继续执行下一个中间件
+      // 请求后处理
+    },
+  ],
+  requestInterceptors: [
+    (url, options) => {
+      return { url, options }; // 返回请求的url和options
+    },
+  ],
+  responseInterceptors: [
+    (response) => {
+      return response; // 返回响应
+    },
+  ],
+};
 
-/**
- * 封装 PUT 请求
- * @template T 响应数据的类型
- * @param {string} url 请求地址
- * @param {any} [data] 请求体数据
- * @param {AxiosRequestConfig} [config] 请求配置
- * @returns {Promise<T>} 返回Promise对象
- */
-export function put<T = any>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T> {
-  return instance.put(url, data, config);
-}
 
-/**
- * 封装 DELETE 请求
- * @template T 响应数据的类型
- * @param {string} url 请求地址
- * @param {any} [params] 请求参数
- * @param {AxiosRequestConfig} [config] 请求配置
- * @returns {Promise<T>} 返回Promise对象
- */
-export function del<T = any>(url: string, params?: any, config?: AxiosRequestConfig): Promise<T> {
-  return instance.delete(url, { params, ...config });
-}
-
-/**
- * 导出默认请求实例
- * 可以直接使用此实例发起自定义请求
- */
-export default instance;
+export default request; // 确保这里是默认导出
