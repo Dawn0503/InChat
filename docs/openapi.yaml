@@ -1,0 +1,579 @@
+openapi: 3.0.0
+info:
+  title: InChat API
+  description: InChat 应用的 API 文档
+  version: 1.0.0
+  contact:
+    name: Your Name
+    email: your.email@example.com
+
+servers:
+  - url: http://localhost:3006
+    description: 开发服务器
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+tags:
+  - name: 用户
+    description: 用户相关操作
+  - name: 消息
+    description: 消息相关操作
+  - name: 好友
+    description: 好友关系相关操作
+
+paths:
+  /api/users/register:
+    post:
+      tags:
+        - 用户
+      summary: 用户注册
+      description: 创建新用户账号
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - username
+                - password
+              properties:
+                username:
+                  type: string
+                  example: "john_doe"
+                password:
+                  type: string
+                  format: password
+                  example: "password123"
+      responses:
+        '201':
+          description: 注册成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "注册成功"
+                  userId:
+                    type: string
+                    example: "507f1f77bcf86cd799439011"
+        '400':
+          description: 请求错误
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "用户名已存在"
+
+  /api/users/login:
+    post:
+      tags:
+        - 用户
+      summary: 用户登录
+      description: 用户登录并获取 JWT token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - username
+                - password
+              properties:
+                username:
+                  type: string
+                  example: "john_doe"
+                password:
+                  type: string
+                  format: password
+                  example: "password123"
+      responses:
+        '200':
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  user:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                        example: "507f1f77bcf86cd799439011"
+                      username:
+                        type: string
+                        example: "john_doe"
+        '401':
+          description: 认证失败
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "用户名或密码错误"
+
+  /api/messages:
+    post:
+      tags:
+        - 消息
+      summary: 发送消息
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - receiver
+                - content
+              properties:
+                receiver:
+                  type: string
+                  description: 接收者ID
+                  example: "507f1f77bcf86cd799439011"
+                content:
+                  type: string
+                  description: 消息内容
+                  example: "你好！"
+      responses:
+        '201':
+          description: 消息发送成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "消息发送成功"
+                  messageId:
+                    type: string
+                    example: "507f1f77bcf86cd799439012"
+    
+    get:
+      tags:
+        - 消息
+      summary: 获取消息列表
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: sender
+          schema:
+            type: string
+          description: 发送者ID
+        - in: query
+          name: receiver
+          schema:
+            type: string
+          description: 接收者ID
+      responses:
+        '200':
+          description: 成功获取消息列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      example: "507f1f77bcf86cd799439012"
+                    sender:
+                      type: string
+                      example: "507f1f77bcf86cd799439011"
+                    receiver:
+                      type: string
+                      example: "507f1f77bcf86cd799439013"
+                    content:
+                      type: string
+                      example: "你好！"
+                    createdAt:
+                      type: string
+                      format: date-time
+                      example: "2024-03-15T12:00:00Z"
+
+  /api/friends/request:
+    post:
+      tags:
+        - 好友
+      summary: 发送好友请求
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - recipientId
+              properties:
+                recipientId:
+                  type: string
+                  description: 接收者ID
+                  example: "507f1f77bcf86cd799439011"
+      responses:
+        '201':
+          description: 好友请求已发送
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "好友请求已发送"
+                  friendship:
+                    type: object
+                    properties:
+                      _id:
+                        type: string
+                        example: "507f1f77bcf86cd799439012"
+                      requester:
+                        type: string
+                        example: "507f1f77bcf86cd799439013"
+                      recipient:
+                        type: string
+                        example: "507f1f77bcf86cd799439011"
+                      status:
+                        type: string
+                        example: "pending"
+                      createdAt:
+                        type: string
+                        format: date-time
+                        example: "2024-03-15T12:00:00Z"
+                      updatedAt:
+                        type: string
+                        format: date-time
+                        example: "2024-03-15T12:00:00Z"
+
+  /api/friends/accept/{requestId}:
+    put:
+      tags:
+        - 好友
+      summary: 接受好友请求
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: requestId
+          required: true
+          schema:
+            type: string
+          description: 好友请求ID
+      responses:
+        '200':
+          description: 已接受好友请求
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "已接受好友请求"
+                  friendship:
+                    type: object
+                    properties:
+                      _id:
+                        type: string
+                        example: "507f1f77bcf86cd799439012"
+                      status:
+                        type: string
+                        example: "accepted"
+
+  /api/friends/reject/{requestId}:
+    put:
+      tags:
+        - 好友
+      summary: 拒绝好友请求
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: requestId
+          required: true
+          schema:
+            type: string
+          description: 好友请求ID
+      responses:
+        '200':
+          description: 已拒绝好友请求
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "已拒绝好友请求"
+                  friendship:
+                    type: object
+                    properties:
+                      _id:
+                        type: string
+                        example: "507f1f77bcf86cd799439012"
+                      status:
+                        type: string
+                        example: "rejected"
+
+  /api/friends:
+    get:
+      tags:
+        - 好友
+      summary: 获取好友列表
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 成功获取好友列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      example: "507f1f77bcf86cd799439011"
+                    username:
+                      type: string
+                      example: "john_doe"
+                    avatar:
+                      type: string
+                      example: "https://example.com/avatar.jpg"
+                    friendshipId:
+                      type: string
+                      example: "507f1f77bcf86cd799439012"
+
+  /api/friends/pending:
+    get:
+      tags:
+        - 好友
+      summary: 获取待处理的好友请求
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 成功获取待处理的好友请求
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      example: "507f1f77bcf86cd799439012"
+                    requester:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          example: "507f1f77bcf86cd799439013"
+                        username:
+                          type: string
+                          example: "jane_doe"
+                        avatar:
+                          type: string
+                          example: "https://example.com/avatar.jpg"
+                    createdAt:
+                      type: string
+                      format: date-time
+                      example: "2024-03-15T12:00:00Z"
+
+  /api/friends/{friendId}:
+    delete:
+      tags:
+        - 好友
+      summary: 删除好友
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: friendId
+          required: true
+          schema:
+            type: string
+          description: 好友ID
+      responses:
+        '200':
+          description: 已删除好友关系
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "已删除好友关系"
+
+  /api/users/all:
+    get:
+      tags:
+        - 用户
+      summary: 获取所有用户
+      description: 获取平台上除当前用户外的所有用户列表
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 成功获取用户列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    _id:
+                      type: string
+                      example: "507f1f77bcf86cd799439011"
+                    username:
+                      type: string
+                      example: "john_doe"
+                    avatar:
+                      type: string
+                      example: "https://example.com/avatar.jpg"
+                    createdAt:
+                      type: string
+                      format: date-time
+                      example: "2024-03-15T12:00:00Z"
+        '401':
+          description: 未授权
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "认证失败"
+        '500':
+          description: 服务器错误
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "获取用户列表失败"
+                  error:
+                    type: string
+                    example: "Internal server error"
+
+  /api/users/{userId}:
+    get:
+      tags:
+        - 用户
+      summary: 获取用户详情
+      description: 获取特定用户的详细信息
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+          description: 用户ID
+      responses:
+        '200':
+          description: 成功获取用户信息
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  _id:
+                    type: string
+                    example: "507f1f77bcf86cd799439011"
+                  username:
+                    type: string
+                    example: "john_doe"
+                  avatar:
+                    type: string
+                    example: "https://example.com/avatar.jpg"
+                  createdAt:
+                    type: string
+                    format: date-time
+                    example: "2024-03-15T12:00:00Z"
+        '404':
+          description: 用户不存在
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "用户不存在"
+
+  /api/users/search:
+    get:
+      tags:
+        - 用户
+      summary: 搜索用户
+      description: 根据关键词搜索用户
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: keyword
+          required: true
+          schema:
+            type: string
+          description: 搜索关键词
+      responses:
+        '200':
+          description: 成功获取搜索结果
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    _id:
+                      type: string
+                      example: "507f1f77bcf86cd799439011"
+                    username:
+                      type: string
+                      example: "john_doe"
+                    avatar:
+                      type: string
+                      example: "https://example.com/avatar.jpg"
+        '400':
+          description: 请求错误
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "请提供搜索关键词"
