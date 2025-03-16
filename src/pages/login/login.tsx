@@ -12,6 +12,7 @@ export default function LoginPage() {
       console.log('登录响应:', response);
       if (response.data && response.data.token) {
         localStorage.setItem('token', response.data.token);
+        localStorage.setItem('id', response.data.user.id);
         window.location.href = '/chat';
       } else {
         console.error('登录失败，未返回 token');

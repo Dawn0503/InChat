@@ -1,21 +1,25 @@
+// 导入必要的依赖和API
 import React, { useState, useEffect } from 'react';
 import '../../index.css';
 import { getAllUsersAPI, User, sendFriendRequestAPI } from '@/apis/friendship';
 
+// 定义组件Props接口
 interface AddFriendProps {
   onClose?: () => void;
 }
 
+// AddFriend组件定义
 const AddFriend: React.FC<AddFriendProps> = ({ onClose }) => {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedUser, setSelectedUser] = useState<User | null>(null);
-  const [allUsers, setAllUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [sending, setSending] = useState(false);
-  const [sendSuccess, setSendSuccess] = useState(false);
+  // 状态管理
+  const [searchTerm, setSearchTerm] = useState(''); // 搜索关键词
+  const [selectedUser, setSelectedUser] = useState<User | null>(null); // 选中的用户
+  const [allUsers, setAllUsers] = useState<User[]>([]); // 所有用户列表
+  const [loading, setLoading] = useState(true); // 加载状态
+  const [error, setError] = useState(''); // 错误信息
+  const [sending, setSending] = useState(false); // 发送好友请求状态
+  const [sendSuccess, setSendSuccess] = useState(false); // 发送成功状态
   
-  // 获取所有用户
+  // 获取所有用户的副作用
   useEffect(() => {
     const fetchUsers = async () => {
       try {
@@ -26,8 +30,15 @@ const AddFriend: React.FC<AddFriendProps> = ({ onClose }) => {
         if (response.code === 0) {
           // 直接使用 response.data，不再检查 response.data.data
           setAllUsers(response.data || []);
+          setError(''); // 清除之前的错误信息
         } else {
-          setError(response.message || '获取用户列表失败');
+          // 处理"操作成功"的特殊情况
+          if (response.message === '操作成功') {
+            setAllUsers(response.data || []);
+            setError('');
+          } else {
+            setError(response.message || '获取用户列表失败');
+          }
         }
       } catch (err) {
         setError('获取用户列表时发生错误');
@@ -40,12 +51,12 @@ const AddFriend: React.FC<AddFriendProps> = ({ onClose }) => {
     fetchUsers();
   }, []);
   
-  // 过滤用户
+  // 根据搜索词过滤用户列表
   const filteredUsers = allUsers.filter(user => 
     user.username.toLowerCase().includes(searchTerm.toLowerCase())
   );
   
-  // 发送好友请求
+  // 处理发送好友请求
   const handleSendFriendRequest = async () => {
     if (!selectedUser) return;
     
@@ -55,8 +66,32 @@ const AddFriend: React.FC<AddFriendProps> = ({ onClose }) => {
       if (response.code === 0) {
         setSendSuccess(true);
         setTimeout(() => setSendSuccess(false), 3000);
+        
+        // 更新用户的关系状态
+        setAllUsers(prevUsers => 
+          prevUsers.map(user => 
+            user._id === selectedUser._id 
+              ? {...user, relationshipStatus: "请求已发送"} 
+              : user
+          )
+        );
       } else {
-        setError(response.message || '发送好友请求失败');
+        // 处理"操作成功"的特殊情况
+        if (response.message === '操作成功') {
+          setSendSuccess(true);
+          setTimeout(() => setSendSuccess(false), 3000);
+          
+          // 更新用户的关系状态
+          setAllUsers(prevUsers => 
+            prevUsers.map(user => 
+              user._id === selectedUser._id 
+                ? {...user, relationshipStatus: "请求已发送"} 
+                : user
+            )
+          );
+        } else {
+          setError(response.message || '发送好友请求失败');
+        }
       }
     } catch (err) {
       setError('发送好友请求时发生错误');
@@ -66,11 +101,13 @@ const AddFriend: React.FC<AddFriendProps> = ({ onClose }) => {
     }
   };
   
+  // 渲染组件UI
   return (
     <div className="flex w-full">
-      {/* 用户列表 */}
+      {/* 左侧用户列表面板 */}
       <div className="w-72 bg-white/70 backdrop-blur-md p-4 shadow-lg
                     border-r border-indigo-100/50">
+        {/* 标题栏 */}
         <div className="flex items-center justify-between mb-6 pb-3 border-b border-indigo-100">
           <h2 className="text-2xl font-bold text-indigo-600
                        transition-all duration-300 hover:text-indigo-800">
@@ -86,6 +123,7 @@ const AddFriend: React.FC<AddFriendProps> = ({ onClose }) => {
           </div>
         </div>
         
+        {/* 搜索框 */}
         <div className="relative mb-4">
           <input 
             type="text" 
@@ -103,19 +141,24 @@ const AddFriend: React.FC<AddFriendProps> = ({ onClose }) => {
           </div>
         </div>
         
+        {/* 用户列表显示区域 */}
         {loading ? (
+          // 加载中状态
           <div className="flex justify-center items-center py-10">
             <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
           </div>
         ) : error ? (
+          // 错误状态
           <div className="text-center py-10 text-red-500">
             {error}
           </div>
         ) : filteredUsers.length === 0 ? (
+          // 无搜索结果状态
           <div className="text-center py-10 text-gray-500">
             没有找到匹配的用户
           </div>
         ) : (
+          // 用户列表
           <div className="space-y-2 overflow-y-auto max-h-[calc(100vh-220px)]">
             {filteredUsers.map(user => (
               <div 
@@ -146,12 +189,12 @@ const AddFriend: React.FC<AddFriendProps> = ({ onClose }) => {
         )}
       </div>
       
-      {/* 用户详情 */}
+      {/* 右侧用户详情面板 */}
       <div className="flex-1 p-6 flex items-center justify-center">
         {selectedUser ? (
           <>
             <div className="max-w-md w-full space-y-6">
-              {/* 用户头像和名称 */}
+              {/* 用户头像和基本信息 */}
               <div className="flex flex-col items-center">
                 <div className="w-24 h-24 rounded-full bg-indigo-500 flex items-center justify-center
                               text-white text-4xl font-medium mb-4 shadow-lg overflow-hidden">
@@ -195,7 +238,7 @@ const AddFriend: React.FC<AddFriendProps> = ({ onClose }) => {
                 </div>
               </div>
               
-              {/* 用户信息卡片 */}
+              {/* 用户详细信息卡片 */}
               <div className="bg-white/70 backdrop-blur-sm rounded-xl p-5 shadow-md border border-indigo-100/50">
                 <h3 className="text-lg font-semibold text-indigo-700 mb-4">用户信息</h3>
                 
@@ -216,6 +259,7 @@ const AddFriend: React.FC<AddFriendProps> = ({ onClose }) => {
             </div>
           </>
         ) : (
+          // 未选择用户时的提示界面
           <div className="flex flex-col items-center justify-center h-full text-gray-500">
             <div className="w-24 h-24 rounded-full bg-indigo-100 flex items-center justify-center
                           text-indigo-300 text-4xl mb-4">

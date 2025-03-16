@@ -7,7 +7,7 @@ export interface User {
   username: string;
   avatar: string;
   createdAt?: string;
-  relationshipStatus?: string;
+  relationship?: string;
 }
 
 // 好友接口

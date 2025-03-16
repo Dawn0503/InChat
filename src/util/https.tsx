@@ -1,6 +1,5 @@
-import { extend, RequestOptionsInit, ResponseError } from 'umi-request';
+import { extend, ResponseError } from 'umi-request';
 import { Alert, Snackbar } from '@mui/material';
-import React from 'react';
 import { createRoot } from 'react-dom/client';
 
 /**
