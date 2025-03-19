@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+// 聊天消息
+message ChatMessage {
+  string userId = 1;
+  string content = 2;
+  int64 timestamp = 3;
+}
+
+// 心跳消息
+message HeartbeatMessage {
+  string userId = 1;
+  int64 timestamp = 2;
+  HeartbeatType type = 3;
+  int32 retryCount = 4;
+}
+
+// 心跳类型
+enum HeartbeatType {
+  PING = 0;  // 基础心跳
+  PONG = 1;  // 心跳响应
+  RETRY = 2; // 重试心跳
+}
+
+// 用户状态消息
+message UserStatusMessage {
+  string userId = 1;
+  string status = 2;
+  int64 lastActive = 3;
+}

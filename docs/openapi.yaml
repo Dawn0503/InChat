@@ -577,3 +577,150 @@ paths:
                   message:
                     type: string
                     example: "请提供搜索关键词"
+
+  /api/users/status:
+    put:
+      tags:
+        - 用户
+      summary: 更新用户状态
+      description: 更新当前用户的状态信息
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - status
+              properties:
+                status:
+                  type: string
+                  enum: [online, offline, away, busy]
+                  example: "online"
+                  description: 用户状态
+                customStatus:
+                  type: string
+                  example: "正在开会"
+                  description: 自定义状态消息
+      responses:
+        '200':
+          description: 状态更新成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "状态更新成功"
+                  status:
+                    type: string
+                    example: "online"
+        '401':
+          description: 未授权
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "认证失败"
+
+  /api/users/typing:
+    post:
+      tags:
+        - 用户
+      summary: 发送正在输入状态
+      description: 向特定用户发送正在输入状态
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - targetUserId
+                - isTyping
+              properties:
+                targetUserId:
+                  type: string
+                  example: "507f1f77bcf86cd799439011"
+                  description: 接收方用户ID
+                isTyping:
+                  type: boolean
+                  example: true
+                  description: 是否正在输入
+      responses:
+        '200':
+          description: 输入状态已发送
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "输入状态已发送"
+        '401':
+          description: 未授权
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "认证失败"
+
+  /api/users/{userId}/status:
+    get:
+      tags:
+        - 用户
+      summary: 获取用户状态
+      description: 获取指定用户的状态信息
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+          description: 用户ID
+      responses:
+        '200':
+          description: 成功获取用户状态
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [online, offline, away, busy]
+                    example: "online"
+                  customStatus:
+                    type: string
+                    example: "正在开会"
+                  lastSeen:
+                    type: string
+                    format: date-time
+                    example: "2024-03-15T12:00:00Z"
+                  isTypingToYou:
+                    type: boolean
+                    example: false
+        '404':
+          description: 用户不存在
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "用户不存在"

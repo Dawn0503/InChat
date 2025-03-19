@@ -1,4 +1,3 @@
-import bcrypt from 'bcryptjs'; // 导入 bcryptjs 库，用于密码加密
 import jwt from 'jsonwebtoken'; // 导入 jsonwebtoken 库，用于生成 JWT
 import User from '../models/User.js'; // 导入用户模型
 import Friendship, { FRIENDSHIP_STATUS } from '../models/Friendship.js';

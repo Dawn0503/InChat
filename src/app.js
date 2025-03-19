@@ -18,6 +18,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 // 导入好友关系路由
 import friendshipRoutes from './routes/friendshipRoutes.js';
+// 导入用户状态路由
+import userStatusRoutes from './routes/userStatusRoutes.js';  // 注意添加 .js 扩展名
 
 // 加载环境变量
 dotenv.config();
@@ -41,6 +43,8 @@ app.use(express.json()); // 解析 JSON 格式的请求体
 app.use('/api/users', userRoutes); // 用户相关的路由
 app.use('/api/messages', messageRoutes); // 消息相关的路由
 app.use('/api/friends', friendshipRoutes); // 添加好友关系路由
+// 注册用户状态路由
+app.use('/api/users', userStatusRoutes);
 // 测试路由
 app.get('/', (req, res) => {
   res.send('Hello World!'); // 返回测试信息
