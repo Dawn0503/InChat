@@ -14,6 +14,8 @@
     "@mui/material": "^6.4.7",
     "axios": "^1.8.2",
     "http-proxy-middleware": "^3.0.3",
+    "protobufjs": "^7.4.0",
+    "socket.io-client": "^4.8.1",
     "umi": "^4.4.6",
     "umi-request": "^1.4.0"
   },
