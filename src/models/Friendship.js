@@ -8,8 +8,12 @@ const STATUS = {
 };
 
 // 定义好友关系模式
+// 在这里，我们定义了一个名为 friendshipSchema 的 Mongoose 模式（Schema），
+// 它用于描述好友关系的数据结构和约束。Schema 是 Mongoose 中的一个重要概念，
+// 它定义了文档的形状，包括字段的类型、是否必填、默认值等。通过定义 Schema，
+// 我们可以确保存储在 MongoDB 中的数据符合预期的格式和规则。
 const friendshipSchema = new mongoose.Schema({
-  requester: { 
+  requester: {
     type: String, 
     required: true, // 请求者字段为必填
     ref: 'User'  // 引用用户模型
