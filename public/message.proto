@@ -9,7 +9,7 @@ message ChatMessage {
 
 // 心跳消息
 message HeartbeatMessage {
-  string userId = 1;
+  string userId = 1; 
   int64 timestamp = 2;
   HeartbeatType type = 3;
   int32 retryCount = 4;

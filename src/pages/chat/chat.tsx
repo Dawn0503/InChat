@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import '../../index.css';
 import AddFriend from '../friends/addFriend';
 import PendingFriendRequests from '../friends/agreeFriend';
@@ -6,8 +6,13 @@ import { getFriendsAPI, Friend } from '../../apis/friendship';
 import { sendMessageAPI, getMessagesAPI, Message, getUserStatusAPI, UserStatusInfo } from '@/apis/chatapi';
 import { io, Socket } from 'socket.io-client';
 import getWebSocketService from '../../services/websocketService';
-
-
+import ThemeSwitcher from '../../components/ThemeSwitcher';
+// getLocalCachedMessages 从本地存储获取缓存的消息
+// cacheMessages 缓存消息, 确保能在刷新离线后访问，获取消息后使用
+// setupNetworkListeners 在 useEffect 中设置网络状态监听器
+// isOnline 检查网络状态
+import { cacheMessages, setupNetworkListeners, isOnline, getLocalCachedMessages } from '@/services/serviceWorkerRegistration';
+import { KeepAlive, KeepAliveProvider } from '../../components/KeepAlive';
 
 const Chat: React.FC = () => {
     const [showAddFriend, setShowAddFriend] = useState(false);
@@ -23,20 +28,31 @@ const Chat: React.FC = () => {
     const [chatWithUserId, setChatWithUserId] = useState(""); // 初始为空字符串
     const socketRef = useRef<Socket | null>(null);
     const [userStatus, setUserStatus] = useState<UserStatusInfo | null>(null);
+    // 这里使用 !navigator.onLine 是为了初始化 isOffline 状态，表示当前是否处于离线状态
+    const [isOffline, setIsOffline] = useState(!navigator.onLine);
+    const [offlineNotice, setOfflineNotice] = useState(false);
+
+    // 添加消息容器的引用，用于自动滚动到最新消息
+    const messagesEndRef = useRef<HTMLDivElement>(null);
 
     // 使用单例模式获取WebSocket服务
     const websocketService = useRef(getWebSocketService());
 
+    const [chatPerformance, setChatPerformance] = useState<{ [key: string]: number }>({});
+
+    // 计时器用于测量性能
+    const timerRef = useRef<number>(0);
+
     // 在组件挂载时连接WebSocket
     useEffect(() => {
         console.log('Chat组件挂载，连接WebSocket');
-        
-        // 确保只连接一次
+
+        // 确保只连接一次, isConnected 检查连接状态
         if (!websocketService.current.isConnected()) {
             websocketService.current.
-            connect();
+                connect();
         }
-        
+
         // 组件卸载时不断开连接，让其他页面可以继续使用
         return () => {
             console.log('Chat组件卸载');
@@ -52,9 +68,9 @@ const Chat: React.FC = () => {
                 const response = await getFriendsAPI();
                 console.log('获取好友响应:', response); // 添加日志查看响应
 
-                // 修改判断逻辑，适应后端返回格式
-                if (response && response.data) {
-                    setFriends(response.data);
+                // 直接使用响应数据
+                if (Array.isArray(response)) { // 检查是否为数组
+                    setFriends(response); // 直接设置好友列表
                 } else {
                     console.error('获取好友列表失败:', response?.message || '未知错误');
                 }
@@ -121,61 +137,158 @@ const Chat: React.FC = () => {
         setShowContacts(!showContacts);
     };
 
-    // 处理点击好友
+    // 修改好友点击处理函数，加入性能测量
     const handleFriendClick = (friendId: string) => {
+        timerRef.current = performance.now();
         setChatWithUserId(friendId);
+
+        // 在渲染完成后计算时间差
+        setTimeout(() => {
+            const renderTime = performance.now() - timerRef.current;
+            setChatPerformance(prev => ({
+                ...prev,
+                [friendId]: renderTime
+            }));
+            console.log(`聊天室切换耗时: ${renderTime.toFixed(2)}ms`);
+        }, 0);
     };
 
-    // 加载聊天记录
+    // 处理网络状态变化
+    useEffect(() => {
+        // 初始化网络状态
+        setIsOffline(!navigator.onLine);
+
+        // 设置网络状态监听器
+        const cleanup = setupNetworkListeners(
+            // 上线回调
+            () => {
+                setIsOffline(false);
+                setOfflineNotice(false);
+            },
+            // 离线回调
+            () => {
+                setIsOffline(true);
+                setOfflineNotice(true);
+                // 3秒后自动隐藏提示
+                setTimeout(() => setOfflineNotice(false), 3000);
+            }
+        );
+        // 返回清理函数
+        return cleanup;
+    }, []);
+
+    // 修改加载聊天记录的逻辑，更好地支持离线模式
     useEffect(() => {
         async function loadMessages() {
             if (!chatWithUserId) return; // 如果没有选择聊天对象，则不加载消息
 
             try {
-                const sent = await getMessagesAPI({
-                    sender: currentUserId,
-                    receiver: chatWithUserId
-                });
+                // 先尝试从 API 获取消息
+                if (isOnline()) {
+                    const sent = await getMessagesAPI({
+                        sender: currentUserId,
+                        receiver: chatWithUserId
+                    });
 
-                const received = await getMessagesAPI({
-                    sender: chatWithUserId,
-                    receiver: currentUserId
-                });
+                    const received = await getMessagesAPI({
+                        sender: chatWithUserId,
+                        receiver: currentUserId
+                    });
 
-                console.log("发送的消息:", sent);
-                console.log("接收的消息:", received);
+                    console.log("发送的消息:", sent);
+                    console.log("接收的消息:", received);
 
-                // 检查 API 返回的数据结构
-                let sentMessages: any[] = []; // 明确指定类型为 any[]
-                if (Array.isArray(sent)) {
-                    sentMessages = sent;
-                } else if (sent && typeof sent === 'object' && 'data' in sent && Array.isArray((sent as any).data)) {
-                    sentMessages = (sent as any).data;
+                    // 检查 API 返回的数据结构
+                    let sentMessages: any[] = []; // 明确指定类型为 any[]
+                    if (Array.isArray(sent)) {
+                        sentMessages = sent;
+                    } else if (sent && typeof sent === 'object' && 'data' in sent && Array.isArray((sent as any).data)) {
+                        sentMessages = (sent as any).data;
+                    }
+
+                    let receivedMessages: any[] = []; // 明确指定类型为 any[]
+                    if (Array.isArray(received)) {
+                        receivedMessages = received;
+                    } else if (received && typeof received === 'object' && 'data' in received && Array.isArray((received as any).data)) {
+                        receivedMessages = (received as any).data;
+                    }
+
+                    // 合并与去重
+                    const allMessages = [...sentMessages, ...receivedMessages]
+                        .filter((msg, index, self) =>
+                            index === self.findIndex((m) => m._id === msg._id) // 根据消息ID去重
+                        )
+                        .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+                    console.log("合并后的消息:", allMessages);
+                    setMessages(allMessages);
+
+                    // 确保消息被缓存
+                    cacheMessages(allMessages, currentUserId, chatWithUserId);
+                } else {
+                    console.log("离线模式：尝试从缓存加载消息");
+
+                    // 尝试从 Service Worker 缓存获取消息
+                    try {
+                        const sent = await getMessagesAPI({
+                            sender: currentUserId,
+                            receiver: chatWithUserId
+                        });
+
+                        const received = await getMessagesAPI({
+                            sender: chatWithUserId,
+                            receiver: currentUserId
+                        });
+
+                        // 如同在线模式一样处理消息
+                        // 检查 API 返回的数据结构
+                        let sentMessages: any[] = []; // 明确指定类型为 any[]
+                        if (Array.isArray(sent)) {
+                            sentMessages = sent;
+                        } else if (sent && typeof sent === 'object' && 'data' in sent && Array.isArray((sent as any).data)) {
+                            sentMessages = (sent as any).data;
+                        }
+
+                        let receivedMessages: any[] = []; // 明确指定类型为 any[]
+                        if (Array.isArray(received)) {
+                            receivedMessages = received;
+                        } else if (received && typeof received === 'object' && 'data' in received && Array.isArray((received as any).data)) {
+                            receivedMessages = (received as any).data;
+                        }
+
+                        // 合并与去重
+                        const allMessages = [...sentMessages, ...receivedMessages]
+                            .filter((msg, index, self) =>
+                                index === self.findIndex((m) => m._id === msg._id) // 根据消息ID去重
+                            )
+                            .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+                        console.log("合并后的消息:", allMessages);
+                        setMessages(allMessages);
+
+                        // 确保消息被缓存
+                        cacheMessages(allMessages, currentUserId, chatWithUserId);
+                    } catch (error) {
+                        console.error("从 Service Worker 获取缓存失败:", error);
+
+                        // 如果 Service Worker 缓存失败，尝试从本地存储获取
+                        const localCachedMessages = getLocalCachedMessages(currentUserId, chatWithUserId);
+                        console.log("从本地存储获取缓存消息:", localCachedMessages);
+
+                        if (localCachedMessages.length > 0) {
+                            setMessages(localCachedMessages);
+                        }
+                    }
                 }
 
-                let receivedMessages: any[] = []; // 明确指定类型为 any[]
-                if (Array.isArray(received)) {
-                    receivedMessages = received;
-                } else if (received && typeof received === 'object' && 'data' in received && Array.isArray((received as any).data)) {
-                    receivedMessages = (received as any).data;
-                }
-
-                // // 合并并排序 这会导致消息重复
-                // const allMessages = [...sentMessages, ...receivedMessages].sort(
-                //     (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-                // );
-                // 合并与去重
-                const allMessages = [...sentMessages, ...receivedMessages]
-                    .filter((msg, index, self) =>
-                        index === self.findIndex((m) => m._id === msg._id) // 根据消息ID去重
-                    )
-                    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-
-
-                console.log("合并后的消息:", allMessages);
-                setMessages(allMessages);
             } catch (error) {
                 console.error("加载消息失败:", error);
+
+                // 尝试从本地存储获取
+                const localCachedMessages = getLocalCachedMessages(currentUserId, chatWithUserId);
+                if (localCachedMessages.length > 0) {
+                    setMessages(localCachedMessages);
+                }
             }
         }
 
@@ -186,7 +299,7 @@ const Chat: React.FC = () => {
     useEffect(() => {
         // 从本地存储获取用户认证令牌
         const token = localStorage.getItem('token'); // 从浏览器本地存储中获取登录令牌
-        
+
         // 创建与服务器的 Socket.IO 连接
         // io() 是 Socket.IO 客户端库的主要函数，用于建立连接
         socketRef.current = io('http://localhost:3006', {
@@ -204,10 +317,10 @@ const Chat: React.FC = () => {
         // 当与服务器成功建立连接时触发
         socketRef.current.on('connect', () => {
             console.log("Socket.IO 连接已建立");
-            
+
             // 连接后发送额外的认证信息
             // emit() 方法用于向服务器发送自定义事件
-            socketRef.current?.emit('authenticate', { 
+            socketRef.current?.emit('authenticate', {
                 token: localStorage.getItem('token'),
                 userId: currentUserId
             });
@@ -250,466 +363,582 @@ const Chat: React.FC = () => {
     }, [currentUserId]); // 依赖项：当用户ID变化时重新建立连接
 
     // 在组件挂载时连接WebSocket，并在卸载时断开
-    useEffect(() => {
-        // 连接WebSocket
-        websocketService.current.connect();
-        
-        // 组件卸载时断开连接
-        return () => {
-            websocketService.current.disconnect();
-        };
-    }, []);
-    
-    // 当聊天对象变更时，订阅其状态
-    useEffect(() => {
-        if (!chatWithUserId) return;
-        
-        // 状态更新回调
-        const handleStatusUpdate = (statusData: UserStatusInfo) => {
-            console.log("通过WebSocket收到用户状态更新:", statusData);
-            setUserStatus(statusData);
-        };
-        
-        // 订阅状态
-        // 使用 websocketService.current 将会访问 useRef 引用的当前值
-        // 如果 websocketService 是通过 useRef 创建的引用对象，.current 属性用于访问该引用指向的实际值
-        // 但在当前代码中，websocketService 似乎是一个服务单例，而不是 useRef 引用，所以不需要 .current
-        websocketService.current.registerStatusListener(chatWithUserId, handleStatusUpdate);
-        
-        // 初始获取一次状态
-        fetchUserStatus();
-        
-        // 清理函数：取消订阅
-        return () => {
-            websocketService.current.unregisterStatusListener(chatWithUserId);
-        };
-    }, [chatWithUserId]);
-    
-    // 保留现有的fetchUserStatus函数用于初始获取
-    const fetchUserStatus = useCallback(async () => {
-        if (!chatWithUserId) {
-            console.log('没有选择聊天对象，不获取状态');
-            return;
-        }
-        
-        console.log('正在获取用户状态，用户ID:', chatWithUserId);
-        
+    // useEffect(() => {
+    //     // 连接WebSocket
+    //     websocketService.current.connect();
+
+    //     // 组件卸载时断开连接
+    //     return () => {
+    //         websocketService.current.disconnect();
+    //     };
+    // }, []);
+
+    // // 当聊天对象变更时，订阅其状态
+    // useEffect(() => {
+    //     if (!chatWithUserId) return;
+
+    //     // 状态更新回调
+    //     const handleStatusUpdate = (statusData: UserStatusInfo) => {
+    //         console.log("通过WebSocket收到用户状态更新:", statusData);
+    //         setUserStatus(statusData);
+    //     };
+
+    //     // 订阅状态
+    //     // 使用 websocketService.current 将会访问 useRef 引用的当前值
+    //     // 如果 websocketService 是通过 useRef 创建的引用对象，.current 属性用于访问该引用指向的实际值
+    //     // 但在当前代码中，websocketService 似乎是一个服务单例，而不是 useRef 引用，所以不需要 .current
+    //     console.log('订阅前用户状态',chatWithUserId);
+    //     websocketService.current.registerStatusListener(chatWithUserId, handleStatusUpdate);
+    //     console.log('订阅用户状态',chatWithUserId);
+         
+    //     // 初始获取一次状态
+    //     fetchUserStatus();
+
+    //     // 清理函数：取消订阅
+    //     return () => {
+    //         console.log('取消订阅用户状态');
+    //         websocketService.current.unregisterStatusListener(chatWithUserId);
+    //     };
+    // }, [chatWithUserId]);
+
+    // // 保留现有的fetchUserStatus函数用于初始获取
+    // const fetchUserStatus = useCallback(async () => {
+    //     if (!chatWithUserId) {
+    //         console.log('没有选择聊天对象，不获取状态');
+    //         return;
+    //     }
+
+    //     console.log('正在获取用户状态，用户ID:', chatWithUserId);
+
+    //     try {
+    //         const response = await getUserStatusAPI(chatWithUserId);
+    //         console.log('获取到的用户状态响应:', response);
+
+    //         if (response.success && response.data) {
+    //             setUserStatus(response.data);
+    //             console.log('设置用户状态为:', response.data);
+    //         }
+    //     } catch (error) {
+    //         console.error('获取用户状态失败:', error);
+    //     }
+    // }, [chatWithUserId]);
+
+    // 修改发送消息的函数，确保接收消息内容作为参数
+    const handleSendMessage = async (content?: string) => {
+        const messageContent = content || newMessage;  // 使用传入的内容或输入框中的内容
+        if (!messageContent.trim() || !chatWithUserId) return;  // 验证消息内容和聊天对象
+
         try {
-            const response = await getUserStatusAPI(chatWithUserId);
-            console.log('获取到的用户状态响应:', response);
-            
-            if (response.success && response.data) {
-                setUserStatus(response.data);
-                console.log('设置用户状态为:', response.data);
-            }
+            // 调用 API 发送消息
+            const response = await sendMessageAPI({
+                receiver: chatWithUserId,
+                content: messageContent
+            });
+            // 创建消息对象
+            const messageObj = {
+                sender: currentUserId,
+                receiver: chatWithUserId,
+                content: messageContent,
+                createdAt: new Date().toISOString()
+            };
+
+            // 先更新本地UI，提供即时反馈
+            setMessages(prev => [...prev, {
+                ...messageObj,
+                id: Date.now().toString() // 临时ID
+            }]);
+            console.log("发送消息响应:", response);
+            // 清空输入框
+            setNewMessage('');
         } catch (error) {
-            console.error('获取用户状态失败:', error);
+            console.error("发送消息失败:", error);
         }
-    }, [chatWithUserId]);
-    
-    // 修改发送消息的函数，使用WebSocket服务
-    const handleSendMessage = () => {
-        if (!newMessage.trim() || !chatWithUserId) return;
-        
-        // 创建消息对象
-        const messageObj: Message = {
-            id: Date.now().toString(),
-            senderId: currentUserId,
-            receiverId: chatWithUserId,
-            content: newMessage,
-            timestamp: new Date().toISOString(),
-            read: false
-        };
-        
-        // 更新本地消息列表
-        setMessages(prev => [...prev, messageObj]);
-        
-        // 通过WebSocket发送消息
-        websocketService.current.sendMessage(chatWithUserId, newMessage);
-        
-        // 清空输入框
-        setNewMessage('');
     };
-    
-    // 添加消息监听器
+
+    // 处理按Enter键发送消息
+    const handleKeyPress = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter' && !e.shiftKey) {  // Enter键发送，Shift+Enter换行
+            e.preventDefault();
+            handleSendMessage();
+        }
+    };
+
+    // 添加自动滚动到最新消息的函数
+    const scrollToBottom = () => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    };
+
+    // 当消息列表更新时，滚动到底部
     useEffect(() => {
-        // 处理接收到的消息
-        const handleNewMessage = (message: any) => {
-            // 只处理与当前聊天相关的消息
-            if (message.senderId === chatWithUserId || 
-                (message.receiverId === chatWithUserId && message.senderId === currentUserId)) {
-                
-                // 转换为应用中使用的消息格式
-                const newMsg: Message = {
-                    id: message.id || Date.now().toString(),
-                    senderId: message.userId,
-                    receiverId: message.receiverId || chatWithUserId,
-                    content: message.content,
-                    timestamp: new Date(message.timestamp).toISOString(),
-                    read: false
-                };
-                
-                // 更新消息列表
-                setMessages(prev => {
-                    // 检查消息是否已存在
-                    if (prev.some(m => m.id === newMsg.id)) {
-                        return prev;
-                    }
-                    return [...prev, newMsg];
-                });
-            }
-        };
-        
-        // 添加消息监听器
-        websocketService.current.registerMessageListener(handleNewMessage);
-        
-        // 清理函数
-        return () => {
-            websocketService.current.unregisterMessageListener(handleNewMessage);
-        };
-    }, [chatWithUserId, currentUserId]);
+        scrollToBottom();
+    }, [messages]);
+
+    // 在Chat组件的顶部声明区域添加状态
+    const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+    const [messageText, setMessageText] = useState('');
+
+    // 添加退出登录函数
+    const handleLogout = () => {
+        // 清除本地存储中的token和用户信息
+        localStorage.removeItem('token');
+        localStorage.removeItem('refreshToken');
+        localStorage.removeItem('id');
+        // 跳转到登录页面
+        window.location.href = '/login';
+    };
+
+    // 在组件挂载时检查登录状态
+    useEffect(() => {
+        const token = localStorage.getItem('token');
+        if (!token) {
+            // 未登录，跳转到登录页面
+            window.location.href = '/login';
+        }
+    }, []);
 
     return (
-        <div className="flex h-screen bg-gradient-to-br from-blue-50 to-indigo-100 transition-all duration-300 overflow-hidden">
-            {/* 移动端菜单按钮 - 仅当侧边栏隐藏时显示 */}
-            {isMobile && !showSidebar && (
-                <button
-                    onClick={toggleSidebar}
-                    className="fixed top-4 right-2 z-50 w-10 h-10 rounded-full bg-white/70 shadow-md
-                              flex items-center justify-center text-indigo-600"
-                >
-                    ☰
-                </button>
-            )}
-
-            {/* 左侧导航栏 */}
-            {showSidebar && (
-                <div className={`${isMobile ? 'fixed left-0 top-0 bottom-0 z-40' : ''} 
-                                w-16 md:w-20 bg-white/70 backdrop-blur-md shadow-lg flex flex-col items-center py-6
-                                border-r border-indigo-100/50 transition-all duration-300`}>
-                    {/* 关闭按钮 - 仅在移动端显示 */}
-                    {isMobile && (
-                        <button
-                            onClick={toggleSidebar}
-                            className="absolute top-4 right-4 w-8 h-8 rounded-full bg-indigo-50
-                                      flex items-center justify-center text-indigo-500"
-                        >
-                            ✕
-                        </button>
-                    )}
-
-                    {/* 头像 */}
-                    <div className="w-10 h-10 md:w-12 md:h-12 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full 
-                                  flex items-center justify-center text-white mt-10
-                                  transform transition-all duration-300 hover:scale-110 hover:shadow-lg 
-                                  hover:shadow-indigo-200 cursor-pointer">
-                        <span className="text-lg md:text-xl font-semibold">Me</span>
+        // 使用 KeepAliveProvider 包裹整个组件，以启用缓存功能 
+        // max={10} 表示最多缓存10个组件
+        <KeepAliveProvider max={10}>
+            <div className="flex h-screen bg-theme transition-all duration-300 overflow-hidden">
+                {/* 离线提示 */}
+                {offlineNotice && (
+                    <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 bg-yellow-500 text-white px-4 py-2 rounded-lg shadow-lg animate-fadeIn">
+                        您已进入离线模式，仍可查看已缓存的聊天记录
                     </div>
+                )}
 
-                    <div className="w-full px-4 mt-6">
-                        <div className="h-px bg-gradient-to-r from-transparent via-indigo-200 to-transparent opacity-70"></div>
-                    </div>
+                {/* 网络状态指示器 - 始终显示在角落 */}
+                <div className={`fixed bottom-4 right-4 z-40 w-3 h-3 rounded-full ${isOffline ? 'bg-red-500' : 'bg-green-500'}`}></div>
 
-                    <div className="flex flex-col items-center space-y-6 mt-6">
-                        {['chat', 'users', 'bell', 'settings'].map((icon, index) => (
-                            <div key={icon}
-                                onClick={
-                                    icon === 'users' ? toggleContacts :
-                                        icon === 'bell' ? handleFriendRequestsClick :
-                                            undefined
-                                }
-                                className={`w-8 h-8 md:w-10 md:h-10 rounded-xl flex items-center justify-center
-                                          transform transition-all duration-300 hover:scale-110
-                                          cursor-pointer shadow-sm hover:shadow-md
-                                          ${index === 0 ? 'bg-indigo-100 text-indigo-600' : 'bg-white/50 text-gray-500 hover:bg-indigo-50 hover:text-indigo-600'}`}
-                                title={
-                                    icon === 'chat' ? '聊天' :
-                                        icon === 'users' ? '联系人' :
-                                            icon === 'bell' ? '好友请求' :
-                                                '设置'
-                                }
+
+
+                {/* 左侧导航栏 */}
+                {showSidebar && (
+                    <div className={`${isMobile ? 'fixed left-0 top-0 bottom-0 z-40' : ''} 
+                                    w-16 md:w-20 bg-card/70 backdrop-blur-md shadow-theme flex flex-col items-center py-6
+                                    border-r border-theme transition-all duration-300`}>
+                        {/* 关闭按钮 - 仅在移动端显示 */}
+                        {isMobile && (
+                            <button
+                                onClick={toggleSidebar}
+                                className="absolute top-4 right-4 w-8 h-8 rounded-full bg-primary/10
+                                          flex items-center justify-center text-primary"
                             >
-                                {icon === 'bell' ? '🔔' : icon[0].toUpperCase()}
-                            </div>
-                        ))}
-                    </div>
-
-                    <div className="mt-auto w-8 h-8 md:w-10 md:h-10 rounded-xl bg-white/50 flex items-center justify-center
-                                  transform transition-all duration-300 hover:bg-red-50 hover:text-red-500
-                                  cursor-pointer shadow-sm hover:shadow-md text-gray-500 mb-6">
-                        <span>X</span>
-                    </div>
-                </div>
-            )}
-
-            {/* 联系人列表 */}
-            {showContacts && (
-                <div className={`${isMobile ? 'fixed left-16 md:left-20 top-0 bottom-0 z-30' : ''} 
-                                w-64 md:w-72 bg-white/70 backdrop-blur-md p-4 shadow-lg
-                                transform transition-all duration-300 hover:shadow-xl
-                                border-r border-indigo-100/50`}>
-                    {/* 仅在移动端显示关闭按钮 */}
-                    {isMobile && (
-                        <button
-                            onClick={toggleContacts}
-                            className="absolute top-4 right-4 w-8 h-8 rounded-full bg-indigo-50
-                                      flex items-center justify-center text-indigo-500"
-                        >
-                            ✕
-                        </button>
-                    )}
-
-                    <div className="flex items-center justify-between mb-6 pb-3 border-b border-indigo-100">
-                        <h2 className="text-xl md:text-2xl font-bold text-indigo-600
-                                     transition-all duration-300 hover:text-indigo-800">
-                            联系人
-                        </h2>
-                        <button
-                            onClick={handleAddFriendClick}
-                            className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center
-                                      text-indigo-500 cursor-pointer hover:bg-indigo-100 transition-colors duration-200
-                                      transform hover:scale-110 active:scale-95"
-                        >
-                            +
-                        </button>
-                    </div>
-
-                    <div className="relative mb-4">
-                        <input
-                            type="text"
-                            placeholder="搜索..."
-                            className="w-full p-2 pl-8 rounded-lg bg-white/50 backdrop-blur-sm
-                                     shadow-sm outline-none border border-indigo-100/50
-                                     transition-all duration-300
-                                     focus:shadow-md focus:border-indigo-300
-                                     placeholder:text-gray-400 text-sm"
-                        />
-                        <span className="absolute left-2.5 top-2.5 text-gray-400 text-sm">🔍</span>
-                    </div>
-
-                    <div className="space-y-3 overflow-y-auto max-h-[calc(100vh-180px)] pr-1
-                                  scrollbar-thin scrollbar-thumb-indigo-200 scrollbar-track-transparent">
-                        {loading ? (
-                            <div className="flex justify-center items-center py-10">
-                                <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-500 rounded-full animate-spin"></div>
-                            </div>
-                        ) : friends.length > 0 ? (
-                            friends.map((friend, index) => (
-                                <div key={friend.id}
-                                    onClick={() => handleFriendClick(friend.id)}
-                                    className={`flex items-center p-3 rounded-xl cursor-pointer
-                                              transform transition-all duration-200
-                                              hover:translate-x-1 hover:shadow-md
-                                              group ${friend.id === chatWithUserId ? 'bg-indigo-50/80' : 'bg-white/50 hover:bg-indigo-50/60'}`}>
-                                    <div className={`w-10 h-10 rounded-full flex items-center justify-center
-                                                  text-white font-medium mr-3 shadow-sm
-                                                  ${friend.id === chatWithUserId ? 'bg-indigo-500' : 'bg-indigo-400'}
-                                                  group-hover:bg-indigo-500 transition-colors duration-200`}>
-                                        {friend.username ? friend.username[0] : '?'}
-                                    </div>
-                                    <div>
-                                        <span className="font-medium text-gray-700">{friend.username || '未知用户'}</span>
-                                        {/* <p className="text-xs text-gray-500">
-                                            {index === 0 ? '正在输入...' : index % 2 === 0 ? '在线' : '5分钟前'}
-                                        </p> */}
-                                    </div>
-                                    {friend.id === chatWithUserId && (
-                                        <div className="ml-auto w-2 h-2 rounded-full bg-indigo-500"></div>
-                                    )}
-                                </div>
-                            ))
-                        ) : (
-                            <div className="text-center py-10 text-gray-500">
-                                暂无好友，点击上方"+"添加好友
-                            </div>
+                                ✕
+                            </button>
                         )}
-                    </div>
-                </div>
-            )}
 
-            {/* 聊天窗口 */}
-            <div className={`flex-1 bg-white/60 backdrop-blur-sm p-4 md:p-6 ${isMobile ? 'ml-0' : (showContacts ? 'ml-0' : 'ml-0')}
-                          ${isMobile ? 'm-0' : 'm-4'} rounded-2xl shadow-lg
-                          transition-all duration-300 relative flex flex-col`}>
-                {/* 聊天头部 */}
-                <div className="flex items-center justify-between mb-4 md:mb-6 pb-3 border-b border-indigo-100">
-                    <div className="flex items-center">
-                        {chatWithUserId ? (
-                            // 找到当前聊天对象的信息
-                            friends.find(friend => friend.id === chatWithUserId) ? (
-                                <>
-                                    <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-indigo-500 flex items-center justify-center
-                                                  text-white font-medium mr-3 md:mr-4 shadow-md">
-                                        {/* 显示用户名首字母作为头像 */}
-                                        {friends.find(friend => friend.id === chatWithUserId)?.username?.[0] || '?'}
-                                    </div>
-                                    <div>
-                                        <h2 className="text-lg md:text-xl font-bold text-indigo-700">
-                                            {/* 显示完整用户名 */}
-                                            {friends.find(friend => friend.id === chatWithUserId)?.username || '未知用户'}
-                                        </h2>
-                                        <p className="text-xs md:text-sm text-indigo-400">
-                                            {userStatus ? (
-                                                <>
-                                                    {userStatus.status === 'online' && '在线'}
-                                                    {userStatus.status === 'offline' && '离线'}
-                                                    {userStatus.status === 'away' && '离开'}
-                                                    {userStatus.status === 'busy' && '忙碌'}
-                                                    {userStatus.customStatus && ` - ${userStatus.customStatus}`}
-                                                    {userStatus.isTypingToYou && ' (正在输入...)'}
-                                                    {userStatus.lastActive && ` - 最后活跃: ${new Date(userStatus.lastActive).toLocaleString()}`}
-                                                </>
-                                            ) : '加载中...'}
-                                        </p>
-                                    </div>
-                                </>
-                            ) : (
-                                // 如果找不到用户信息
-                                <>
-                                    <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-gray-300 flex items-center justify-center
-                                                  text-white font-medium mr-3 md:mr-4 shadow-md">
-                                        ?
-                                    </div>
-                                    <div>
-                                        <h2 className="text-lg md:text-xl font-bold text-gray-500">未知用户</h2>
-                                        <p className="text-xs md:text-sm text-gray-400">离线</p>
-                                    </div>
-                                </>
-                            )
-                        ) : (
-                            // 如果没有选择聊天对象
-                            <>
-                                <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-gray-200 flex items-center justify-center
-                                              text-gray-400 font-medium mr-3 md:mr-4 shadow-md">
-                                    <span>...</span>
-                                </div>
-                                <div>
-                                    <h2 className="text-lg md:text-xl font-bold text-gray-400">
-                                        请选择聊天对象
-                                    </h2>
-                                    <p className="text-xs md:text-sm text-gray-400">从左侧选择好友开始聊天</p>
-                                </div>
-                            </>
-                        )}
-                    </div>
-                    <div className="flex space-x-2">
-                        <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center
-                                      text-indigo-500 cursor-pointer hover:bg-indigo-100 transition-colors duration-200">
-                            📞
+                        {/* 头像 */}
+                        <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-primary flex items-center justify-center
+                                      text-white font-medium mb-8 shadow-theme overflow-hidden">
+                            {/* 用户头像或首字母 */}
+                            U
                         </div>
-                        <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center
-                                      text-indigo-500 cursor-pointer hover:bg-indigo-100 transition-colors duration-200">
+
+                        {/* 导航图标 */}
+                        <div className="flex-1 flex flex-col items-center space-y-6">
+                            <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center
+                                          text-primary cursor-pointer hover:bg-primary/20 transition-colors duration-200">
+                                💬
+                            </div>
+                            {/* <div className="w-10 h-10 rounded-full bg-card flex items-center justify-center
+                                          text-theme cursor-pointer hover:bg-primary/10 transition-colors duration-200">
+                                👥
+                            </div> */}
+                            <button
+                                onClick={handleFriendRequestsClick}
+                                className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center
+                                              text-primary hover:bg-primary/20 transition-colors duration-200"
+                            >
+                                🔔
+                            </button>
+                            <button
+                                onClick={handleAddFriendClick}
+                                className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center
+                                              text-primary hover:bg-primary/20 transition-colors duration-200"
+                            >
+                                ➕
+                            </button>
+                            <div
+                                onClick={handleLogout}
+                                className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center
+                                          text-red-500 cursor-pointer hover:bg-red-200 transition-colors duration-200"
+                                title="退出登录"
+                            >
+                                🚪
+                            </div>
+                        </div>
+
+                        {/* 主题切换器 */}
+                        <div className="mt-6 mb-4">
+                            <ThemeSwitcher />
+                        </div>
+
+                        {/* 设置图标--装饰用 */}
+                        <div className="w-10 h-10 rounded-full bg-card flex items-center justify-center
+                                      text-theme cursor-pointer hover:bg-primary/10 transition-colors duration-200">
                             ⚙️
                         </div>
                     </div>
-                </div>
+                )}
 
-                {/* 聊天消息 */}
-                <div className="flex-1 space-y-4 overflow-y-auto pr-2 mb-4
-                              scrollbar-thin scrollbar-thumb-indigo-200 scrollbar-track-transparent">
-                    <div className="text-center">
-                        <span className="text-xs bg-indigo-100 text-indigo-500 px-2 py-1 rounded-full">今天</span>
-                    </div>
-
-                    <div className="space-y-4">
-                        {messages.length > 0 ? (
-                            messages.map(msg => (
-                                <div
-                                    key={msg._id || msg.id || `${msg.sender}-${msg.createdAt}`}
-                                    className={`flex ${msg.sender === currentUserId ? 'justify-end' : 'justify-start'}`}
+                {/* 联系人列表 */}
+                {showContacts && (
+                    <div className={`${isMobile ? 'fixed left-0 top-0 bottom-0 z-30' : ''} 
+                                    w-full sm:w-72 md:w-80 lg:w-96 bg-card/80 backdrop-blur-md
+                                    border-r border-theme transition-all duration-300
+                                    flex flex-col`}>
+                        {/* 联系人列表头部 */}
+                        <div className="p-4 border-b border-theme flex justify-between items-center">
+                            <h2 className="text-xl font-semibold text-theme">联系人</h2>
+                            <div className="flex space-x-2">
+                                {/* <button
+                                    onClick={handleFriendRequestsClick}
+                                    className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center
+                                              text-primary hover:bg-primary/20 transition-colors duration-200"
                                 >
-                                    <div className={`p-3 rounded-2xl ${msg.sender === currentUserId
-                                        ? 'bg-gradient-to-br from-indigo-500 to-indigo-600 text-white rounded-tr-sm'
-                                        : 'bg-white rounded-tl-sm'} 
-                                        max-w-[75%] md:max-w-md shadow-md
-                                        transform transition-all duration-200
-                                        hover:-translate-y-1 hover:shadow-lg`}
+                                    🔔
+                                </button>
+                                <button
+                                    onClick={handleAddFriendClick}
+                                    className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center
+                                              text-primary hover:bg-primary/20 transition-colors duration-200"
+                                >
+                                    ➕
+                                </button> */}
+                                {isMobile && (
+                                    <button
+                                        onClick={toggleContacts}
+                                        className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center
+                                                  text-primary hover:bg-primary/20 transition-colors duration-200"
                                     >
-                                        <p>{msg.content}</p>
-                                        <small className={`text-xs ${msg.sender === currentUserId ? 'text-indigo-100' : 'text-gray-400'}`}>
-                                            {new Date(msg.createdAt).toLocaleString()}
-                                        </small>
-                                    </div>
+                                        ✕
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* 联系人搜索 */}
+                        <div className="p-4">
+                            <div className="relative">
+                                <input
+                                    type="text"
+                                    placeholder="搜索联系人..."
+                                    className="w-full p-2 pl-8 rounded-lg bg-card border border-theme
+                                             text-theme placeholder-theme/50 focus:outline-none focus:border-primary"
+                                />
+                                <span className="absolute left-2.5 top-2.5 text-theme/50">
+                                    🔍
+                                </span>
+                            </div>
+                        </div>
+
+                        {/* 联系人列表 */}
+                        <div className="flex-1 overflow-y-auto">
+                            {loading ? (
+                                <div className="flex justify-center items-center h-32">
+                                    <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
                                 </div>
-                            ))
+                            ) : friends.length > 0 ? (
+                                <div className="space-y-1 p-2">
+                                    {friends.map((friend) => (
+                                        <div
+                                            key={friend.id}
+                                            onClick={() => handleFriendClick(friend.id)}
+                                            className={`p-3 rounded-lg flex items-center space-x-3 cursor-pointer
+                                                      transition-all duration-200 ${chatWithUserId === friend.id
+                                                    ? 'bg-primary/10 text-primary'
+                                                    : 'hover:bg-card text-theme'
+                                                }`}
+                                        >
+                                            <div className="w-10 h-10 rounded-full bg-primary/80 flex items-center justify-center
+                                                          text-white font-medium overflow-hidden">
+                                                {friend.avatar ? (
+                                                    <img src={friend.avatar} alt={friend.username} className="w-full h-full object-cover" />
+                                                ) : (
+                                                    friend.username[0].toUpperCase()
+                                                )}
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex justify-between items-center">
+                                                    <h3 className="font-medium truncate">{friend.username}</h3>
+                                                    <span className="text-xs opacity-70">12:34</span>
+                                                </div>
+                                                <p className="text-sm opacity-70 truncate">
+                                                    {/* 最后一条消息预览 */}
+                                                    最近没有消息
+                                                </p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="flex flex-col items-center justify-center h-32 text-theme/50">
+                                    <div className="text-4xl mb-2">👥</div>
+                                    <p>暂无联系人</p>
+                                    <button
+                                        onClick={handleAddFriendClick}
+                                        className="mt-2 px-3 py-1 text-sm rounded-full bg-primary/10 text-primary hover:bg-primary/20"
+                                    >
+                                        添加好友
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {/* 聊天区域 */}
+                <div className="flex-1 flex flex-col p-4 space-y-4 overflow-hidden">
+                    {/* 聊天头部 */}
+                    {chatWithUserId ? (
+                        <div className="bg-card/70 backdrop-blur-sm rounded-xl p-4 shadow-theme border border-theme flex justify-between items-center">
+                            <div className="flex items-center space-x-3">
+                                {isMobile && !showContacts && (
+                                    <button
+                                        onClick={toggleContacts}
+                                        className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center
+                                                  text-primary hover:bg-primary/20 transition-colors duration-200 mr-2"
+                                    >
+                                        ◀
+                                    </button>
+                                )}
+                                <div className="w-10 h-10 rounded-full bg-primary/80 flex items-center justify-center
+                                              text-white font-medium overflow-hidden">
+                                    {friends.find(friend => friend.id === chatWithUserId)?.avatar ? (
+                                        <img src={friends.find(friend => friend.id === chatWithUserId)?.avatar} alt={friends.find(friend => friend.id === chatWithUserId)?.username} className="w-full h-full object-cover" />
+                                    ) : (
+                                        friends.find(friend => friend.id === chatWithUserId)?.username[0].toUpperCase() || '?'
+                                    )}
+                                </div>
+                                <div>
+                                    <h3 className="font-medium text-theme">
+                                        {friends.find(friend => friend.id === chatWithUserId)?.username || '未选择联系人'}
+                                    </h3>
+                                    <p className="text-xs text-theme/70">
+                                        {userStatus ? (
+                                            userStatus.status === 'online' ? '在线' :
+                                                userStatus.status === 'offline' ? '离线' :
+                                                    userStatus.status === 'away' ? '离开' : '忙碌'
+                                        ) : '状态未知'}
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="flex space-x-2">
+                                {isOffline && (
+                                    <div className="flex items-center text-xs text-red-500 mr-2">
+                                        <span className="w-2 h-2 bg-red-500 rounded-full mr-1"></span>
+                                        离线模式
+                                    </div>
+                                )}
+                                {/* <button className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center
+                                                  text-primary hover:bg-primary/20 transition-colors duration-200">
+                                    📞
+                                </button>
+                                <button className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center
+                                                  text-primary hover:bg-primary/20 transition-colors duration-200">
+                                    📹
+                                </button> */}
+                                {/* <button className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center
+                                                  text-primary hover:bg-primary/20 transition-colors duration-200">
+                                    ⋮
+                                </button> */}
+                                                {/* 移动端菜单按钮 - 仅当侧边栏隐藏时显示 */}
+                {isMobile && !showSidebar && (
+                    <button
+                        onClick={toggleSidebar}
+                        className="fixed top-4 right-2 z-50 w-10 h-10 rounded-full bg-card shadow-theme
+                                  flex items-center justify-center text-primary"
+                    >
+                        ☰
+                    </button>
+                )}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="bg-card/70 backdrop-blur-sm rounded-xl p-4 shadow-theme border border-theme">
+                            <div className="flex items-center">
+                                {isMobile && !showContacts && (
+                                    <button
+                                        onClick={toggleContacts}
+                                        className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center
+                                                  text-primary hover:bg-primary/20 transition-colors duration-200 mr-2"
+                                    >
+                                        ◀
+                                    </button>
+                                )}
+                                <h3 className="font-medium text-theme">选择一个联系人开始聊天</h3>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 消息区域 - 使用 KeepAlive */}
+                    <div className="flex-1 overflow-hidden flex flex-col">
+                        {chatWithUserId ? (
+                            <KeepAlive id={`chat-${chatWithUserId}`}>
+                                <div className="flex-1 overflow-y-auto p-2 space-y-4 max-h-[calc(100vh-300px)]">
+                                    {/* 添加视觉指示 - 显示组件创建时间 */}
+                                    <div className="sticky top-0 bg-yellow-100 p-2 text-xs text-center rounded-md mb-2 z-10">
+                                        {`组件创建于: ${new Date().toLocaleTimeString()}`}
+                                        <br />
+                                        {`消息数量: ${messages.length}`}
+                                    </div>
+
+                                    {messages.length > 0 ? (
+                                        messages.map((msg, index) => (
+                                            <div
+                                                key={msg.id || index}
+                                                className={`flex ${msg.sender === currentUserId ? 'justify-end' : 'justify-start'}`}
+                                            >
+                                                {/* 消息气泡 */}
+                                                <div
+                                                    className={`max-w-[80%] md:max-w-[70%] rounded-lg px-4 py-2 shadow-theme
+                                                              ${msg.sender === currentUserId
+                                                            ? 'bg-primary text-white rounded-br-none'
+                                                            : 'bg-card text-theme rounded-bl-none border border-theme'}`}
+                                                >
+                                                    {msg.content}
+                                                    <div
+                                                        className={`text-xs mt-1 
+                                                                  ${msg.sender === currentUserId
+                                                                ? 'text-white/70'
+                                                                : 'text-theme/50'}`}
+                                                    >
+                                                        {new Date(msg.createdAt).toLocaleTimeString()}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))
+                                    ) : (
+                                        <div className="text-center py-10 text-theme/50">
+                                            暂无消息记录
+                                        </div>
+                                    )}
+                                    <div ref={messagesEndRef} />
+                                </div>
+                            </KeepAlive>
                         ) : (
-                            <div className="text-center py-10 text-gray-500">
+                            <div className="text-center py-10 text-theme/50">
                                 暂无消息记录
                             </div>
                         )}
                     </div>
-                </div>
 
-                {/* 输入区域 */}
-                <div className="bg-white/70 backdrop-blur-sm rounded-xl p-3 shadow-md border border-indigo-100/50">
-                    <div className="flex items-center space-x-2 mb-2">
-                        <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center
-                                      text-indigo-500 cursor-pointer hover:bg-indigo-100 transition-colors duration-200">
-                            😊
+                    {/* 添加性能显示 (可选) */}
+                    {chatWithUserId && chatPerformance[chatWithUserId] && (
+                        <div className="text-xs text-theme/50 text-right">
+                            切换耗时: {chatPerformance[chatWithUserId].toFixed(2)}ms
                         </div>
-                        <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center
-                                      text-indigo-500 cursor-pointer hover:bg-indigo-100 transition-colors duration-200">
-                            📎
-                        </div>
-                    </div>
-                    <div className="flex space-x-2 md:space-x-4">
-                        <input
-                            type="text"
-                            placeholder="输入消息..."
-                            value={newMessage}
-                            onChange={(e) => setNewMessage(e.target.value)}
-                            className="flex-1 p-2 md:p-3 rounded-lg bg-white/70
-                                     outline-none border border-indigo-100/50
-                                     transition-all duration-300
-                                     focus:border-indigo-300
-                                     placeholder:text-gray-400 text-sm md:text-base"
-                        />
-                        <button
-                            className={`px-4 md:px-6 rounded-lg text-white shadow-md
-                                     transform transition-all duration-300
-                                     hover:shadow-lg hover:scale-105
-                                     active:scale-95 ${newMessage.trim() ? 'bg-indigo-500 hover:bg-indigo-600' : 'bg-indigo-300 cursor-not-allowed'}`}
-                            disabled={!newMessage.trim()}
-                            onClick={handleSendMessage}
-                        >
-                            发送
-                        </button>
-                    </div>
-                </div>
-            </div>
+                    )}
 
-            {/* 添加好友弹窗 */}
-            {showAddFriend && (
-                <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50
-                              animate-fadeIn">
-                    <div className="bg-white/90 backdrop-blur-md w-[95%] md:w-[90%] max-w-5xl h-[90%] rounded-2xl shadow-2xl
-                                  overflow-hidden animate-scaleIn">
-                        <div className="flex h-full">
-                            <AddFriend onClose={handleCloseAddFriend} />
+                    {/* 输入区域 */}
+                    <div className="bg-card/70 backdrop-blur-sm rounded-xl p-3 shadow-theme border border-theme">
+                        <div className="flex items-center space-x-2 mb-2">
+                            <div
+                                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                                className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center
+                                          text-primary cursor-pointer hover:bg-primary/20 transition-colors duration-200 relative"
+                            >
+                                😊
+                                {showEmojiPicker && (
+                                    <div className="absolute bottom-full left-0 mb-2 bg-white rounded-xl shadow-lg p-2 w-64 h-48 overflow-y-auto z-10">
+                                        <div className="grid grid-cols-8 gap-1">
+                                            {[
+                                                '😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣',
+                                                '😊', '😇', '🙂', '🙃', '😉', '😌', '😍', '🥰',
+                                                '😘', '😗', '😙', '😚', '😋', '😛', '😝', '😜',
+                                                '🤪', '🤨', '🧐', '🤓', '😎', '🤩', '🥳', '😏',
+                                                '😒', '😞', '😔', '😟', '😕', '🙁', '☹️', '😣',
+                                                '😖', '😫', '😩', '🥺', '😢', '😭', '😤', '😠',
+                                                '😡', '🤬', '🤯', '😳', '🥵', '🥶', '😱', '😨',
+                                                '😰', '😥', '😓', '🤗', '🤔', '🤭', '🤫', '🤥'
+                                            ].map((emoji, index) => (
+                                                <div
+                                                    key={index}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setMessageText(prev => prev + emoji);
+                                                        setShowEmojiPicker(false);
+                                                    }}
+                                                    className="w-6 h-6 flex items-center justify-center cursor-pointer hover:bg-gray-100 rounded"
+                                                >
+                                                    {emoji}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                            {/* <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center
+                                          text-primary cursor-pointer hover:bg-primary/20 transition-colors duration-200">
+                                📎
+                            </div> */}
                         </div>
-                    </div>
-                </div>
-            )}
 
-            {/* 好友请求弹窗 */}
-            {showFriendRequests && (
-                <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50
-                              animate-fadeIn">
-                    <div className="bg-white/90 backdrop-blur-md w-[95%] md:w-[90%] max-w-4xl h-[90%] rounded-2xl shadow-2xl
-                                  overflow-hidden animate-scaleIn">
-                        <div className="flex h-full">
-                            <PendingFriendRequests
-                                onClose={handleCloseFriendRequests}
-                                onAccept={(userId) => {
-                                    console.log("接受了用户ID为", userId, "的好友请求");
-                                    // 这里可以添加接受好友后的逻辑，比如刷新联系人列表等
+                        <div className="flex items-center">
+                            <textarea
+                                value={messageText}
+                                onChange={(e) => setMessageText(e.target.value)}
+                                placeholder="输入消息..."
+                                className="flex-1 p-2 rounded-xl bg-white/50 backdrop-blur-sm
+                                         min-h-[60px] max-h-32 shadow-sm outline-none border border-theme/30
+                                         transition-all duration-300
+                                         focus:shadow-md focus:border-primary
+                                         placeholder:text-gray-400 resize-none"
+                            ></textarea>
+                            <button
+                                onClick={() => {
+                                    // 处理发送消息逻辑
+                                    if (messageText.trim()) {
+                                        // 这里调用发送消息的函数
+                                        handleSendMessage(messageText);
+                                        setMessageText('');
+                                    }
                                 }}
-                            />
+                                className="ml-2 px-4 py-4 rounded-xl bg-primary/80 text-white
+                                         shadow-sm hover:bg-primary transition-all duration-200
+                                         transform hover:scale-105 active:scale-95 flex items-center justify-center"
+                            >
+                                <span>发送</span>
+                            </button>
                         </div>
                     </div>
                 </div>
-            )}
-        </div>
+
+                {/* 添加好友弹窗 */}
+                {showAddFriend && (
+                    <div className="fixed inset-0 bg-theme/30 backdrop-blur-sm flex items-center justify-center z-50
+                                  animate-fadeIn">
+                        <div className="bg-card/90 backdrop-blur-md w-[95%] md:w-[90%] max-w-5xl h-[90%] rounded-2xl shadow-theme
+                                      overflow-hidden animate-scaleIn border border-theme">
+                            <div className="flex h-full">
+                                <AddFriend onClose={handleCloseAddFriend} />
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* 好友请求弹窗 */}
+                {showFriendRequests && (
+                    <div className="fixed inset-0 bg-theme/30 backdrop-blur-sm flex items-center justify-center z-50
+                                  animate-fadeIn">
+                        <div className="bg-card/90 backdrop-blur-md w-[95%] md:w-[90%] max-w-4xl h-[90%] rounded-2xl shadow-theme
+                                      overflow-hidden animate-scaleIn border border-theme">
+                            <div className="flex h-full">
+                                <PendingFriendRequests
+                                    onClose={handleCloseFriendRequests}
+                                    onAccept={(userId) => {
+                                        console.log("接受了用户ID为", userId, "的好友请求");
+                                        // 这里可以添加接受好友后的逻辑，比如刷新联系人列表等
+                                    }}
+                                />
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+        </KeepAliveProvider>
     );
 };
 

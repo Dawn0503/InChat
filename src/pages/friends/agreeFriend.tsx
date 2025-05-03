@@ -42,30 +42,30 @@ const PendingFriendRequests: React.FC<PendingFriendRequestsProps> = ({ onClose, 
         const response = await getPendingFriendRequestsAPI();
         console.log('API响应:', response); // 添加日志，查看实际返回数据结构
         
-        // 检查API响应是否成功
-        if (response.code === 0 || response.message === '操作成功') {
+        // 处理直接返回数组和通过data属性返回数组的情况
+        const responseData = Array.isArray(response) ? response : (response.data || []);
+        
+        if (responseData && responseData.length > 0) {
           // 格式化API返回的数据，确保与组件内部使用的数据结构一致
-          const formattedData = Array.isArray(response.data) 
-            ? response.data.map(req => ({
-                _id: req.id || req.id || '',  // 使用请求ID，如果不存在则使用空字符串
-                sender: {
-                  _id: req.requester?.id || '',  // 使用发送者ID
-                  username: req.requester?.username || '未知用户', // 使用发送者用户名，如果不存在则显示"未知用户"
-                  avatar: req.requester?.avatar   // 使用发送者头像
-                },
-                status: req.status || 'pending',  // 使用请求状态，如果不存在则默认为"pending"
-                createdAt: req.createdAt || new Date().toISOString() // 使用创建时间，如果不存在则使用当前时间
-              }))
-            : [];
+          const formattedData = responseData.map(req => ({
+            _id: req.id || '',  // 使用请求ID
+            sender: {
+              _id: req.requester?.id || '',  // 使用发送者ID
+              username: req.requester?.username || '未知用户', // 使用发送者用户名
+              avatar: req.requester?.avatar   // 使用发送者头像
+            },
+            status: 'pending',  // 待处理的请求状态设为"pending"
+            createdAt: req.createdAt || new Date().toISOString() // 使用创建时间
+          }));
           
           // 更新请求列表状态
           setRequests(formattedData);
           // 清除错误信息
           setError('');
         } else {
-          // 如果API响应不成功，设置错误信息
-          setError(response.message || '获取好友请求失败');
-        }
+          // 如果没有数据，设置空数组
+          setRequests([]);
+        } 
       } catch (err) {
         // 捕获并处理异常
         setError('获取好友请求时发生错误');

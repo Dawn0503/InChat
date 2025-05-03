@@ -146,51 +146,179 @@ request.interceptors.request.use((url, options) => {
   };
 });
 
+// 添加刷新 token 的接口
+export async function refreshToken(refreshTokenStr: string) {
+  try {
+    const response = await fetch(`${process.env.API_URL || 'http://localhost:3006'}/api/users/refresh-token`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ refreshToken: refreshTokenStr }),
+    });
+    
+    if (!response.ok) {
+      throw new Error('刷新token失败');
+    }
+    
+    const data = await response.json();
+    console.log('刷新token响应:', data);
+    return data;
+  } catch (error) {
+    console.error('刷新token出错:', error);
+    throw error;
+  }
+}
+
+// 是否正在刷新 token，用于响应拦截器
+let isRefreshing = false;
+// 等待 token 刷新的请求队列
+let refreshSubscribers: ((token: string) => void)[] = [];
+
+// 将请求添加到队列
+// cb 是回调函数，用于在 token 刷新后执行队列中的请求
+const subscribeTokenRefresh = (cb: (token: string) => void) => {
+  refreshSubscribers.push(cb);
+};
+
+// 刷新 token 后执行队列中的请求
+const onTokenRefreshed = (token: string) => {
+  refreshSubscribers.forEach(cb => cb(token));
+  refreshSubscribers = [];
+};
+
 /**
  * 响应拦截器
  * 在接收到响应后对响应数据进行处理
  */
 request.interceptors.response.use(async (response) => {
-  const data = await response.clone().json();
-  console.log('响应数据结构:', data);
+  // 克隆响应以避免多次读取 body，因为响应流只能被读取一次，克隆后可以多次使用
+  const res = response.clone();
   
-  // 如果响应直接包含 token，说明是登录接口的返回
-  if (data.token) {
-    return {
-      code: 200,
-      data: data,
-      message: '登录成功',
-      success: true
-    };
-  }
+  console.log('响应状态码:', res.status);
   
-  // 处理其他接口的返回
-  if (!data.code) {
-    return {
-      code: 200,
-      data: data,
-      message: '操作成功',
-      success: true
-    };
-  }
-  
-  // 处理标准格式的返回
-  if (data.code !== 200) {
-    showNotification(
-      '请求失败',
-      data.message || '未知错误',
-      'error'
-    );
+  // 检查响应状态码
+  if (res.status === 401) {
+    console.log('检测到401错误，尝试刷新token');
     
-    if (data.code === 401) {
+    // 获取原始请求的URL和选项
+    const url = response.url;
+    const options = {
+      method: response.request?.method || 'GET',
+      headers: {
+        ...Object.fromEntries(response.clone().headers.entries())
+      },
+      body: response.request?.body
+    };
+    
+    // 如果是刷新 token 的请求失败，则清除 token 并跳转到登录页
+    if (url.includes('/refresh-token')) {
+      console.log('刷新token请求失败');
       localStorage.removeItem('token');
+      localStorage.removeItem('refreshToken');
       window.location.href = '/login';
+      return Promise.reject({ message: '刷新 token 失败，请重新登录' });
     }
     
-    return Promise.reject(data);
+    // 获取 refreshToken
+    const refreshTokenStr = localStorage.getItem('refreshToken');
+    if (!refreshTokenStr) {
+      console.log('没有找到refreshToken，跳转到登录页');
+      localStorage.removeItem('token');
+      window.location.href = '/login';
+      return Promise.reject({ message: '未找到刷新令牌，请重新登录' });
+    }
+    
+    // 如果当前没有在刷新 token，则开始刷新
+    if (!isRefreshing) {
+      isRefreshing = true;
+      console.log('开始刷新token');
+      
+      try {
+        // 调用刷新 token 的接口
+        const refreshRes = await refreshToken(refreshTokenStr);
+        console.log('刷新token响应:', refreshRes);
+        
+        if (refreshRes && refreshRes.accessToken) {
+          console.log('刷新token成功:', refreshRes);
+          
+          // 更新本地存储的 token
+          const newToken = refreshRes.accessToken;
+          localStorage.setItem('token', newToken);
+          console.log('已更新token:', newToken);
+          
+          // 通知所有等待的请求
+          onTokenRefreshed(newToken);
+          
+          // 重置刷新状态
+          isRefreshing = false;
+          
+          // 使用新 token 重新发送原始请求
+          console.log('使用新token重新发送请求');
+          const newOptions = {
+            ...options,
+            headers: {
+              ...options.headers,
+              Authorization: `Bearer ${newToken}`,
+            },
+          };
+          
+          // 返回重新发送的请求
+          return request(url, newOptions);
+        } else {
+          // 刷新失败，清除 token 并跳转到登录页
+          console.error('刷新token失败，响应不包含新token');
+          localStorage.removeItem('token');
+          localStorage.removeItem('refreshToken');
+          window.location.href = '/login';
+          isRefreshing = false;
+          return Promise.reject({ message: '刷新 token 失败，请重新登录' });
+        }
+      } catch (error) {
+        // 刷新出错，清除 token 并跳转到登录页
+        console.error('刷新token过程中出错:', error);
+        localStorage.removeItem('token');
+        localStorage.removeItem('refreshToken');
+        window.location.href = '/login';
+        isRefreshing = false;
+        return Promise.reject(error);
+      }
+    } else {
+      // 如果已经在刷新 token，则将请求加入队列
+      console.log('已有刷新token请求在进行中，将当前请求加入队列');
+      return new Promise((resolve) => {
+        subscribeTokenRefresh((token) => {
+          const newOptions = {
+            ...options,
+            headers: {
+              ...options.headers,
+              Authorization: `Bearer ${token}`,
+            },
+          };
+          resolve(request(url, newOptions));
+        });
+      });
+    }
   }
   
-  return data;
+  // 处理正常响应
+  try {
+    // 尝试解析响应数据
+    const data = await response.clone().json();
+    
+    // 如果响应中包含错误信息，则显示通知
+    if (data && !data.success && data.message) {
+      showNotification('请求错误', data.message, 'error');
+    } else if (data && data.success && data.message) {
+      // 成功响应包含消息时，显示成功通知
+      showNotification('操作成功', data.message, 'success');
+    }
+    
+    return response;
+  } catch (error) {
+    // 如果响应不是JSON格式，直接返回原始响应
+    return response;
+  }
 });
 
 // 自定义一个简单的类型，或者使用 any
@@ -233,5 +361,39 @@ export const requestConfig: CustomRequestConfig = {
   ],
 };
 
+const token = localStorage.getItem('token');
+console.log('toke2333n:', token);
+// 首先，我们检查是否存在 token
+if (token) {
+  try {
+    // 将 token 按照 '.' 分割，获取第二部分，这部分通常是 JWT 的负载部分
+    const base64Url = token.split('.')[1];
+    
+    // 将 base64Url 中的字符进行替换，以符合 base64 的标准格式
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    
+    // 使用 atob 函数将 base64 字符串解码为原始字符串
+    // 然后使用 decodeURIComponent 处理字符串中的编码
+    const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+      return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+    }).join(''));
+    
+    // 将解码后的 JSON 字符串解析为对象
+    const payload = JSON.parse(jsonPayload);
+    
+    // 输出 token 的过期时间，乘以 1000 是因为 JavaScript 的时间戳是以毫秒为单位
+    // exp 是 token 的过期时间，单位为秒。以下是 token 过期时间的输出。
+    console.log('Token 过期时间:', new Date(payload.exp * 1000));
+    
+    // 输出当前时间
+    console.log('当前时间:', new Date());
+    
+    // 计算并输出 token 剩余的有效时间（以秒为单位）
+    console.log('剩余时间(秒):', payload.exp - Math.floor(Date.now() / 1000));
+  } catch (error) {
+    // 如果解析过程中发生错误，输出错误信息
+    console.error('解析 token 失败:', error);
+  }
+}
 
 export default request; // 确保这里是默认导出

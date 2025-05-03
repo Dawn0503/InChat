@@ -1,4 +1,5 @@
 import request from '@/util/https';
+import { isOnline } from '@/services/serviceWorkerRegistration';
 
 // 消息类型定义
 export interface Message {
@@ -83,15 +84,35 @@ export async function sendMessageAPI(params: SendMessageParams) {
 }
 
 /**
- * 获取消息列表
+ * 获取消息列表，支持离线模式
  * @param params 可选的查询参数，包括发送者ID和接收者ID
  * @returns 消息列表
  */
 export async function getMessagesAPI(params?: GetMessagesParams) {
-  return request<Message[]>('/api/messages', {
-    method: 'GET',
-    params
-  });
+  try {
+    // 如果在线，优先从网络获取
+    if (isOnline()) {
+      return await request<Message[]>('/api/messages', {
+        method: 'GET',
+        params
+      });
+    } else {
+      console.log('离线模式：从缓存获取消息');
+      throw new Error('离线模式');
+    }
+  } catch (error) {
+    // 如果网络请求失败或处于离线状态，Service Worker 会从缓存中提供数据
+    // 这里不需要做特殊处理，因为请求会被 Service Worker 拦截处理
+    // Service Worker 会返回缓存的响应
+    console.log('网络请求失败，将由 Service Worker 从缓存获取数据');
+    // 当网络请求失败时，Service Worker 会从缓存中提供数据
+    // 这里的请求是为了确保即使在离线状态下也能获取到消息
+    // 通过请求缓存的消息，确保用户在离线时仍然能够查看之前的聊天记录
+    return request<Message[]>('/api/messages', {
+      method: 'GET',
+      params
+    });
+  }
 }
 
 /**

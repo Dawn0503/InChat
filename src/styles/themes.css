@@ -1,0 +1,48 @@
+/* 默认主题使用 :root 伪类定义 */
+:root {
+  /* 默认亮色主题 */
+  --primary-color: #6366f1; 
+  --primary-light: #818cf8;
+  --primary-dark: #4f46e5;
+  --text-color: #1f2937;
+  --bg-color: #f9fafb;
+  --card-bg: #ffffff;
+  --border-color: rgba(99, 102, 241, 0.1);
+  --shadow-color: rgba(0, 0, 0, 0.1);
+}
+
+/* 暗色主题 覆盖默认主题 */
+html[data-theme="dark"] {
+  --primary-color: #818cf8;
+  --primary-light: #a5b4fc;
+  --primary-dark: #6366f1;
+  --text-color: #f9fafb;
+  --bg-color: #111827;
+  --card-bg: #1f2937;
+  --border-color: rgba(129, 140, 248, 0.2);
+  --shadow-color: rgba(0, 0, 0, 0.5);
+}
+
+/* 粉色主题 */
+[data-theme="pink"] {
+  --primary-color: #ec4899;
+  --primary-light: #f472b6;
+  --primary-dark: #db2777;
+  --text-color: #1f2937;
+  --bg-color: #fdf2f8;
+  --card-bg: #ffffff;
+  --border-color: rgba(236, 72, 153, 0.1);
+  --shadow-color: rgba(236, 72, 153, 0.1);
+}
+
+/* 蓝色主题 */
+[data-theme="blue"] {
+  --primary-color: #3b82f6;
+  --primary-light: #60a5fa;
+  --primary-dark: #2563eb;
+  --text-color: #1f2937;
+  --bg-color: #eff6ff;
+  --card-bg: #ffffff;
+  --border-color: rgba(59, 130, 246, 0.1);
+  --shadow-color: rgba(59, 130, 246, 0.1);
+} 

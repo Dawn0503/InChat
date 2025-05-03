@@ -26,10 +26,10 @@ const AddFriend: React.FC<AddFriendProps> = ({ onClose }) => {
         setLoading(true);
         const response = await getAllUsersAPI();
         console.log("API 响应:", response); // 调试日志
-        
-        if (response.code === 0) {
-          // 直接使用 response.data，不再检查 response.data.data
-          setAllUsers(response.data || []);
+
+        // 直接使用响应数据
+        if (Array.isArray(response) && response.length > 0) {
+          setAllUsers(response); // 直接设置用户列表
           setError(''); // 清除之前的错误信息
         } else {
           // 处理"操作成功"的特殊情况
