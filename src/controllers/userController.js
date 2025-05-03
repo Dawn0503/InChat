@@ -25,16 +25,25 @@ export const register = async (req, res) => {
     // 保存用户到数据库
     await user.save();
 
-    // 生成 JWT token，包含用户 ID 和用户名，设置过期时间为 30 天
-    const token = jwt.sign(
+    // 生成 access token
+    const accessToken = jwt.sign(
       { id: user._id, username: user.username },
       process.env.JWT_SECRET,
-      { expiresIn: '30d' }
+      { expiresIn: '3d' }
     );
 
-    // 返回用户信息和 token，状态码为 201（创建成功）
+    
+    // 生成 refresh token
+    const refreshToken = jwt.sign(
+      { id: user._id, username: user.username },
+      process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET + '_refresh',
+      { expiresIn: '7d' }
+    );
+
+    // 返回用户信息和两种 token
     res.status(201).json({
-      token,
+      accessToken,
+      refreshToken,
       user: {
         id: user._id,
         username: user.username,
@@ -69,16 +78,23 @@ export const login = async (req, res) => {
     user.lastActive = new Date(); // 更新最后活跃时间
     await user.save();
 
-    // 生成 JWT token
-    const token = jwt.sign(
+    const accessToken = jwt.sign(
       { id: user._id, username: user.username },
       process.env.JWT_SECRET,
-      { expiresIn: '30d' }
+      { expiresIn: '3d' } // 确保这里是 1 分钟
     );
 
-    // 返回用户信息和 token，状态码为 200（成功）
+    // 生成 refresh token (长期有效，如 7 天)
+    const refreshToken = jwt.sign(
+      { id: user._id, username: user.username },
+      process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET + '_refresh',
+      { expiresIn: '7d' }
+    );
+
+    // 返回用户信息和两种 token
     res.status(200).json({
-      token,
+      accessToken,
+      refreshToken,
       user: {
         id: user._id,
         username: user.username,
@@ -303,6 +319,54 @@ export const searchUsers = async (req, res) => {
     res.status(500).json({ 
       message: '搜索用户失败', 
       error: err.message // 返回错误信息
+    });
+  }
+};
+
+// 刷新 token 的控制器
+export const refreshToken = async (req, res) => {
+  const { refreshToken } = req.body;
+
+  if (!refreshToken) {
+    return res.status(401).json({ message: '缺少刷新令牌' });
+  }
+
+  try {
+    // 验证 refresh token
+    const decoded = jwt.verify(
+      refreshToken, 
+      process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET + '_refresh'
+    );
+    
+    // 查找用户
+    const user = await User.findById(decoded.id);
+    if (!user) {
+      return res.status(403).json({ message: '用户不存在' });
+    }
+
+    // 生成新的 access token
+    // jwt.sign 是用于生成 JSON Web Token 的方法，它接受三个参数：要编码的 payload、密钥和选项。这里我们生成一个 access token。
+    const accessToken = jwt.sign(
+      { id: user._id, username: user.username },
+      process.env.JWT_SECRET,
+      { expiresIn: '3d' }
+    );
+
+    // 返回新的 access token
+    return res.json({ accessToken });
+  } catch (error) {
+    console.error('刷新 token 错误:', error);
+    
+    if (error.name === 'TokenExpiredError') {
+      return res.status(403).json({ 
+        message: '刷新令牌已过期，请重新登录',
+        error: error.message 
+      });
+    }
+    
+    return res.status(403).json({ 
+      message: '无效的刷新令牌',
+      error: error.message 
     });
   }
 };
