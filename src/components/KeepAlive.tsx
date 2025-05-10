@@ -1,10 +1,19 @@
 import React, { createContext, useContext, useState, useRef, useEffect } from 'react';
 
 // 创建 KeepAlive 上下文，提供缓存、设置缓存和查看缓存状态的功能
+/**
+ * createContext 用于创建一个 React 上下文，它允许组件树中的任何组件访问共享数据，而不必通过 props 层层传递。
+ * 
+ * KeepAlive 组件需要创建上下文的原因：
+ * 1. 状态共享：允许不同层级的 KeepAlive 组件共享缓存数据
+ * 2. 全局管理：提供一个中央位置管理所有被缓存的组件
+ * 3. 避免 props 钻取：直接通过 useContext 获取缓存功能，无需通过中间组件传递
+ * 4. 解耦合：将缓存逻辑与组件渲染逻辑分离，提高代码可维护性
+ */
 const KeepAliveContext = createContext<{
   cache: Map<string, any>; // 缓存的 Map 对象
   setCache: (key: string, component: any) => void; // 设置缓存的函数
-  cacheStatus: () => Record<string, boolean>; // 查看缓存状态的函数
+  cacheStatus: () => Record<string, boolean>; // 返回一个对象，键为缓存名称，值为布尔值表示该缓存是否存在
 }>({
   cache: new Map(), // 初始化缓存为一个空的 Map
   setCache: () => {}, // 默认的设置缓存函数
@@ -30,9 +39,18 @@ const KeepAliveContext = createContext<{
  * 特别适用于频繁切换的页面或组件，可以避免重复创建和初始化的开销，提升用户体验。
  */
 
+/**
+ * React.FC 是 React 中的类型定义，代表 "Function Component"（函数组件）。
+ * 它是 TypeScript 中用于类型检查的接口，确保组件接收正确的 props 类型。
+ * 这里定义了 KeepAliveProvider 组件接收 children 和可选的 max 参数。
+ */
 export const KeepAliveProvider: React.FC<{children: React.ReactNode, max?: number}> = ({children, max = 10}) => {
   // useRef 不会因为组件的重新渲染而重新初始化
   // 在 effect 清理阶段，useRef能获取到最新值进而避免闭包陷阱
+  // 闭包陷阱是指在React函数组件中，当使用useEffect等钩子时，其回调函数会捕获当时渲染周期的props和state值。
+  // 如果这些回调在后续渲染中仍然引用旧的状态值，就会导致意外行为。
+  // 例如，在定时器或事件监听器中，可能会使用过时的状态，而useRef因为是可变的引用对象，
+  // 总是指向最新值，所以可以避免这个问题。
   const cacheRef = useRef(new Map<string, any>()); // 用于存储缓存的引用
   const keysRef = useRef<string[]>([]); // 用于存储缓存键的引用，维护 LRU 顺序
    
@@ -89,10 +107,15 @@ export const KeepAlive: React.FC<{
   const { cache, setCache } = useContext(KeepAliveContext); // 获取上下文中的缓存和设置缓存函数
   const [counter, setCounter] = useState(0); // 计数器状态，用于演示状态保持
   const isCached = cache.has(id); // 检查当前组件是否在缓存中
-  const firstRenderRef = useRef(true); // 用于标记首次渲染
-  const scrollPositionRef = useRef(0); // 用于存储滚动位置
-  const containerRef = useRef<HTMLDivElement>(null); // 用于引用容器元素
-  const counterRef = useRef(0); // 用于跟踪最新计数器值的引用
+  // useRef的使用为了避免闭包陷阱
+  // firstRenderRef避免在依赖项变化时重复执行首次渲染逻辑
+  const firstRenderRef = useRef(true); // 用于标记首次渲染，在组件生命周期内保持引用
+  // scrollPositionRef在事件处理函数和useEffect清理函数中保持最新值
+  const scrollPositionRef = useRef(0); // 用于存储滚动位置，确保获取最新滚动状态
+  // containerRef用于直接访问DOM元素，避免在异步操作中丢失引用
+  const containerRef = useRef<HTMLDivElement>(null); // 用于引用容器元素，在组件重渲染间保持稳定
+  // counterRef确保在组件卸载时能获取到最新的counter值，而不是闭包中的旧值
+  const counterRef = useRef(0); // 用于跟踪最新计数器值的引用，解决useEffect依赖问题
   
   // 同步计数器和计数器引用
   useEffect(() => {
@@ -145,7 +168,7 @@ export const KeepAlive: React.FC<{
     const timer = setInterval(() => {
       setCounter(prev => {
         const newValue = prev + 1; // 递增计数器
-        console.log(`[KeepAlive ${id}] 计数器递增: ${prev} -> ${newValue}`);
+        // console.log(`[KeepAlive ${id}] 计数器递增: ${prev} -> ${newValue}`);
         return newValue; // 返回新的计数器值
       });
     }, 5000);

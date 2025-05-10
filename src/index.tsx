@@ -7,13 +7,22 @@ import Chat from './pages/chat/chat'; // 引入 Chat 组件
 import Login from './pages/login/login'; // 引入 Login 组件
 import IndexPage from './pages/index'; // 引入首页组件
 import themeService from './services/themeService'; // 引入主题服务
-import { registerServiceWorker } from './services/serviceWorkerRegistration';
+import { registerServiceWorker, checkServiceWorkerStatus } from './services/serviceWorkerRegistration';
 
 // 确保主题服务在应用启动时初始化
 themeService.getCurrentTheme(); // 这会触发从本地存储加载主题
 
-// 注册 Service Worker
+// 注册 Service Worker - 简化并优化注册过程
+console.log('开始注册 Service Worker...');
 registerServiceWorker();
+
+// 在页面加载后检查Service Worker状态
+window.addEventListener('load', () => {
+  console.log('页面加载完成，检查Service Worker状态...');
+  setTimeout(() => {
+    checkServiceWorkerStatus();
+  }, 2000);
+});
 
 // 简单的路由组件
 const App = () => {

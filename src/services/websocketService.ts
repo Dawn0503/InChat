@@ -159,15 +159,15 @@ class WebSocketService {
         if (data instanceof Uint8Array || data instanceof ArrayBuffer) {
           // 二进制数据
           const buffer = data instanceof ArrayBuffer ? new Uint8Array(data) : data; // 将ArrayBuffer转换为Uint8Array，以便于后续的解码操作
-          console.log('收到心跳响应a:', buffer); // 日志输出，表示收到心跳响应
+          // console.log('收到心跳响应a:', buffer); // 日志输出，表示收到心跳响应
           message = HeartbeatMessage.decode(buffer); // 解码心跳消息  将二进制数据转换为消息！！！！
-          console.log('解码心跳消息a:', message); // 日志输出，表示解码心跳消息
+          // console.log('解码心跳消息a:', message); // 日志输出，表示解码心跳消息
         } else {
           // JSON数据
           message = data; // 直接赋值
         }
 
-        console.log('收到心跳响应:', message); // 日志输出，表示收到心跳响应
+        // console.log('收到心跳响应:', message); // 日志输出，表示收到心跳响应
 
         // 重置重试计数
         // this.retryCount = 0; // 重置重试计数
